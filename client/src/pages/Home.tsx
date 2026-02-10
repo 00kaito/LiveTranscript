@@ -7,6 +7,7 @@ import { SettingsDialog, DEFAULT_SETTINGS, type TranscriptionSettings } from "@/
 import { ChunkedAudioRecorder } from "@/lib/audio-recorder";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Copy, RefreshCw, AlertCircle } from "lucide-react";
+import { SummaryDialog } from "@/components/SummaryDialog";
 import { useToast } from "@/hooks/use-toast";
 
 function findSentenceEndings(text: string): number[] {
@@ -273,7 +274,8 @@ export default function Home() {
           )}
 
           {transcript && (
-            <div className="absolute top-4 right-4 flex gap-2">
+            <div className="absolute top-4 right-4 flex gap-1">
+              <SummaryDialog transcript={transcript} language={settings.language} />
               <button
                 onClick={copyToClipboard}
                 className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
