@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useTranscribeChunk, useDiarizeChunk, type DiarizedSegment } from "@/hooks/use-transcription";
+import { useTranscribeChunk, useDiarizeChunk, DiarizeModelError, type DiarizedSegment } from "@/hooks/use-transcription";
 import { Button } from "@/components/Button";
 import { LiveIndicator } from "@/components/LiveIndicator";
 import { AudioVisualizer } from "@/components/AudioVisualizer";
@@ -163,6 +163,17 @@ export default function Home() {
           }
         } catch (err: any) {
           console.error("Diarize chunk error:", err);
+          if (err instanceof DiarizeModelError) {
+            setError(err.message);
+            if (recorderRef.current) {
+              recorderRef.current.stop();
+              recorderRef.current = null;
+            }
+            setIsRecording(false);
+            setIsSilent(true);
+            setSettings((prev) => ({ ...prev, diarizeEnabled: false }));
+            return;
+          }
           setError("Connection issue. Some audio may have been lost.");
         }
         return;

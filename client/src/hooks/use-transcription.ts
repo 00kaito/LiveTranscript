@@ -65,6 +65,14 @@ export function useTranscribeChunk() {
   });
 }
 
+export class DiarizeModelError extends Error {
+  code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 export function useDiarizeChunk() {
   return useMutation({
     mutationFn: async ({ audioBlob, language }: DiarizeInput): Promise<DiarizeResult> => {
@@ -82,10 +90,14 @@ export function useDiarizeChunk() {
 
       if (!res.ok) {
         let errorMessage = "Diarized transcription failed";
+        let errorCode = "";
         try {
           const errorData = await res.json();
           errorMessage = errorData.message || errorMessage;
-        } catch {
+          errorCode = errorData.code || "";
+        } catch {}
+        if (errorCode === "MODEL_NOT_AVAILABLE") {
+          throw new DiarizeModelError(errorMessage, errorCode);
         }
         throw new Error(errorMessage);
       }

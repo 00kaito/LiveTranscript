@@ -118,7 +118,15 @@ export async function registerRoutes(
 
     } catch (error: any) {
       console.error("[Diarize] Error:", error.message || error);
-      res.status(500).json({ message: error.message || "Diarized transcription failed" });
+      const msg = error.message || "Diarized transcription failed";
+      if (msg.includes("404") || msg.includes("deployment") || msg.includes("does not exist")) {
+        res.status(422).json({
+          message: "The speaker diarization model (gpt-4o-transcribe-diarize) is not available through the current API provider. Please disable diarization in settings.",
+          code: "MODEL_NOT_AVAILABLE",
+        });
+      } else {
+        res.status(500).json({ message: msg });
+      }
     } finally {
       if (tempFilePath) {
         fs.unlink(tempFilePath, () => {});
