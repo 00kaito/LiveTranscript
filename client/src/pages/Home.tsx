@@ -281,7 +281,12 @@ export default function Home() {
         }
       } catch (err: any) {
         console.error("Transcription chunk error:", err);
-        setError("Connection issue. Some audio may have been lost.");
+        const msg = err?.message || "";
+        if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
+          setError("Invalid API key. Please check your OpenAI API key in settings.");
+        } else {
+          setError(msg || "Connection issue. Some audio may have been lost.");
+        }
       }
     };
   });
