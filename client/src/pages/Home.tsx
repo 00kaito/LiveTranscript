@@ -34,11 +34,43 @@ export default function Home() {
         });
         if (result.text && result.text.trim()) {
           setTranscript((prev) => {
-            const needsSpace =
-              prev.length > 0 &&
-              !prev.endsWith(" ") &&
-              !result.text.startsWith(" ");
-            return prev + (needsSpace ? " " : "") + result.text;
+            const newText = result.text.trim();
+            if (prev.length === 0) return newText;
+
+            const tail = prev.slice(-500);
+            const tailLower = tail.toLowerCase();
+            const incomingLower = newText.toLowerCase();
+
+            if (tailLower.includes(incomingLower)) return prev;
+
+            const incomingWords = incomingLower.split(/\s+/).filter(Boolean);
+            if (incomingWords.length >= 3) {
+              const ngramSize = 3;
+              const ngrams: string[] = [];
+              for (let i = 0; i <= incomingWords.length - ngramSize; i++) {
+                ngrams.push(incomingWords.slice(i, i + ngramSize).join(" "));
+              }
+              let matched = 0;
+              for (const ng of ngrams) {
+                if (tailLower.includes(ng)) matched++;
+              }
+              if (ngrams.length > 0 && matched / ngrams.length > 0.5) return prev;
+            }
+
+            let bestOverlap = 0;
+            const maxCheck = Math.min(tail.length, newText.length);
+            for (let len = 5; len <= maxCheck; len++) {
+              const suffix = tailLower.slice(-len);
+              if (incomingLower.startsWith(suffix)) {
+                bestOverlap = len;
+              }
+            }
+
+            const unique = bestOverlap > 0 ? newText.slice(bestOverlap).trim() : newText;
+            if (!unique) return prev;
+
+            const needsSpace = !prev.endsWith(" ") && !unique.startsWith(" ");
+            return prev + (needsSpace ? " " : "") + unique;
           });
         }
       } catch (err: any) {

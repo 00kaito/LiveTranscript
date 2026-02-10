@@ -97,6 +97,13 @@ export class ChunkedAudioRecorder {
     }
     this.chunks = [];
 
+    let sumSquares = 0;
+    for (let i = 0; i < merged.length; i++) {
+      sumSquares += merged[i] * merged[i];
+    }
+    const rms = Math.sqrt(sumSquares / merged.length);
+    if (rms < 0.005) return;
+
     const wavBlob = encodeWav(merged, this.audioContext?.sampleRate ?? SAMPLE_RATE);
     this.onChunk(wavBlob);
   }
