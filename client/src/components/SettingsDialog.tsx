@@ -28,6 +28,7 @@ export type TranscriptionSettings = {
   clarifyEnabled: boolean;
   clarifySentenceCount: number;
   summaryPrompt: string;
+  diarizeEnabled: boolean;
 };
 
 export const DEFAULT_SUMMARY_PROMPT = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   clarifyEnabled: false,
   clarifySentenceCount: 3,
   summaryPrompt: "",
+  diarizeEnabled: false,
 };
 
 const LANGUAGES = [
@@ -145,6 +147,22 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="space-y-1">
+                <Label>Speaker diarization</Label>
+                <p className="text-xs text-muted-foreground">
+                  Identify who is speaking. Uses gpt-4o-transcribe-diarize model. Context prompt and temperature are not available in this mode.
+                </p>
+              </div>
+              <Switch
+                checked={settings.diarizeEnabled}
+                onCheckedChange={(v) => update({ diarizeEnabled: v })}
+                data-testid="switch-diarize"
+              />
+            </div>
           </div>
 
           <div className="space-y-3">

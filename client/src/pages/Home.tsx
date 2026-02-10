@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useTranscribeChunk } from "@/hooks/use-transcription";
+import { useTranscribeChunk, useDiarizeChunk, type DiarizedSegment } from "@/hooks/use-transcription";
 import { Button } from "@/components/Button";
 import { LiveIndicator } from "@/components/LiveIndicator";
 import { AudioVisualizer } from "@/components/AudioVisualizer";
@@ -9,6 +9,20 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Copy, RefreshCw, AlertCircle } from "lucide-react";
 import { SummaryDialog } from "@/components/SummaryDialog";
 import { useToast } from "@/hooks/use-toast";
+
+const SPEAKER_COLORS = [
+  { bg: "bg-blue-500/10 dark:bg-blue-400/10", text: "text-blue-700 dark:text-blue-300", badge: "bg-blue-500/20 text-blue-700 dark:text-blue-300" },
+  { bg: "bg-emerald-500/10 dark:bg-emerald-400/10", text: "text-emerald-700 dark:text-emerald-300", badge: "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" },
+  { bg: "bg-amber-500/10 dark:bg-amber-400/10", text: "text-amber-700 dark:text-amber-300", badge: "bg-amber-500/20 text-amber-700 dark:text-amber-300" },
+  { bg: "bg-purple-500/10 dark:bg-purple-400/10", text: "text-purple-700 dark:text-purple-300", badge: "bg-purple-500/20 text-purple-700 dark:text-purple-300" },
+  { bg: "bg-rose-500/10 dark:bg-rose-400/10", text: "text-rose-700 dark:text-rose-300", badge: "bg-rose-500/20 text-rose-700 dark:text-rose-300" },
+  { bg: "bg-cyan-500/10 dark:bg-cyan-400/10", text: "text-cyan-700 dark:text-cyan-300", badge: "bg-cyan-500/20 text-cyan-700 dark:text-cyan-300" },
+];
+
+function getSpeakerColor(speaker: string) {
+  const idx = speaker.charCodeAt(0) - 65;
+  return SPEAKER_COLORS[idx % SPEAKER_COLORS.length];
+}
 
 function findSentenceEndings(text: string): number[] {
   const endings: number[] = [];
@@ -24,6 +38,7 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [isSilent, setIsSilent] = useState(true);
   const [transcript, setTranscript] = useState("");
+  const [diarizedSegments, setDiarizedSegments] = useState<DiarizedSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TranscriptionSettings>(() => {
     try {
@@ -40,6 +55,7 @@ export default function Home() {
 
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
+  const diarizeMutation = useDiarizeChunk();
   const handleChunkRef = useRef<(wavBlob: Blob) => void>(() => {});
 
   useEffect(() => {
@@ -105,6 +121,53 @@ export default function Home() {
   useEffect(() => {
     handleChunkRef.current = async (wavBlob: Blob) => {
       const s = settingsRef.current;
+
+      if (s.diarizeEnabled) {
+        try {
+          setError(null);
+          const result = await diarizeMutation.mutateAsync({
+            audioBlob: wavBlob,
+            language: s.language,
+          });
+
+          if (result.segments && result.segments.length > 0) {
+            setDiarizedSegments((prev) => {
+              const newSegs = result.segments.filter((seg) => seg.text.trim());
+              if (newSegs.length === 0) return prev;
+
+              if (prev.length > 0) {
+                const lastSeg = prev[prev.length - 1];
+                const firstNew = newSegs[0];
+                if (lastSeg.speaker === firstNew.speaker) {
+                  const merged = [...prev];
+                  merged[merged.length - 1] = {
+                    ...lastSeg,
+                    text: lastSeg.text + " " + firstNew.text,
+                    end: firstNew.end,
+                  };
+                  return [...merged, ...newSegs.slice(1)];
+                }
+              }
+
+              return [...prev, ...newSegs];
+            });
+
+            const plainText = result.segments
+              .filter((seg) => seg.text.trim())
+              .map((seg) => `${seg.speaker}: ${seg.text}`)
+              .join("\n");
+            setTranscript((prev) => {
+              if (prev.length === 0) return plainText;
+              return prev + "\n" + plainText;
+            });
+          }
+        } catch (err: any) {
+          console.error("Diarize chunk error:", err);
+          setError("Connection issue. Some audio may have been lost.");
+        }
+        return;
+      }
+
       const prompt = transcriptRef.current.slice(-s.contextLength);
       try {
         setError(null);
@@ -181,7 +244,9 @@ export default function Home() {
 
       toast({
         title: "Microphone Active",
-        description: "Transcription started. Speak clearly.",
+        description: settings.diarizeEnabled
+          ? "Diarized transcription started. Speaker identification active."
+          : "Transcription started. Speak clearly.",
       });
     } catch (err) {
       console.error("Error accessing microphone:", err);
@@ -205,6 +270,7 @@ export default function Home() {
   const clearTranscript = () => {
     if (confirm("Are you sure you want to clear the transcript?")) {
       setTranscript("");
+      setDiarizedSegments([]);
       clarifiedUpToRef.current = 0;
     }
   };
@@ -217,10 +283,12 @@ export default function Home() {
     });
   };
 
+  const hasContent = transcript.length > 0 || diarizedSegments.length > 0;
+
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcript]);
+  }, [transcript, diarizedSegments]);
 
   return (
     <div className="min-h-screen bg-background text-foreground font-body selection:bg-primary/20">
@@ -255,7 +323,33 @@ export default function Home() {
 
       <main className="pt-24 pb-32 max-w-4xl mx-auto px-4 sm:px-6">
         <div className="relative min-h-[60vh] bg-white dark:bg-card rounded-3xl border border-border shadow-sm p-8 md:p-12 mb-8 transition-shadow hover:shadow-md">
-          {transcript ? (
+          {settings.diarizeEnabled && diarizedSegments.length > 0 ? (
+            <div className="space-y-3" data-testid="text-transcript">
+              {diarizedSegments.map((seg, i) => {
+                const color = getSpeakerColor(seg.speaker);
+                const prevSpeaker = i > 0 ? diarizedSegments[i - 1].speaker : null;
+                const showLabel = seg.speaker !== prevSpeaker;
+                return (
+                  <div key={i} data-testid={`segment-speaker-${seg.speaker}-${i}`}>
+                    {showLabel && (
+                      <div className="flex items-center gap-2 mb-1 mt-3 first:mt-0">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${color.badge}`}>
+                          Speaker {seg.speaker}
+                        </span>
+                      </div>
+                    )}
+                    <div className={`rounded-lg px-3 py-2 ${color.bg}`}>
+                      <p className={`leading-relaxed ${color.text}`}>{seg.text}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              {isRecording && (
+                <span className="inline-block w-2 h-5 ml-1 bg-primary align-middle animate-cursor-blink" />
+              )}
+              <div ref={transcriptEndRef} />
+            </div>
+          ) : transcript ? (
             <div className="prose prose-lg max-w-none text-foreground leading-relaxed whitespace-pre-wrap" data-testid="text-transcript">
               {transcript}
               {isRecording && (
@@ -273,7 +367,7 @@ export default function Home() {
             </div>
           )}
 
-          {transcript && (
+          {hasContent && (
             <div className="absolute top-4 right-4 flex gap-1">
               <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
               <button

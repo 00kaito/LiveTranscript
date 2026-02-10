@@ -60,6 +60,72 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/transcribe-diarize", upload.single("file"), async (req, res) => {
+    let tempFilePath: string | undefined;
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      tempFilePath = req.file.path;
+      const language = req.body.language || "pl";
+      console.log(`[Diarize] Chunk received: ${req.file.size} bytes, lang=${language}`);
+
+      const buffer = await fs.promises.readFile(tempFilePath);
+      const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
+
+      const transcribeParams: any = {
+        file: file,
+        model: "gpt-4o-transcribe-diarize",
+        response_format: "diarized_json",
+        chunking_strategy: "auto",
+      };
+
+      if (language !== "auto") {
+        transcribeParams.language = language;
+      }
+
+      const response: any = await openai.audio.transcriptions.create(transcribeParams);
+
+      type DiarizedSegment = { speaker: string; text: string; start: number; end: number };
+      const diarizedSegments: DiarizedSegment[] = [];
+
+      const segments = response.segments || [];
+      for (const seg of segments) {
+        const text = (seg.text || "").trim();
+        if (text) {
+          diarizedSegments.push({
+            speaker: seg.speaker || "A",
+            text,
+            start: seg.start || 0,
+            end: seg.end || 0,
+          });
+        }
+      }
+
+      if (diarizedSegments.length === 0 && response.text) {
+        diarizedSegments.push({
+          speaker: "A",
+          text: response.text.trim(),
+          start: 0,
+          end: 0,
+        });
+      }
+
+      const plainText = diarizedSegments.map((s) => s.text).join(" ");
+      console.log(`[Diarize] Result: ${diarizedSegments.length} segments, text: "${plainText.slice(0, 100)}..."`);
+      res.json({ segments: diarizedSegments, text: plainText });
+
+    } catch (error: any) {
+      console.error("[Diarize] Error:", error.message || error);
+      res.status(500).json({ message: error.message || "Diarized transcription failed" });
+    } finally {
+      if (tempFilePath) {
+        fs.unlink(tempFilePath, () => {});
+      }
+    }
+  });
+
   app.post("/api/clarify", async (req, res) => {
     try {
       const { text, language } = req.body;
