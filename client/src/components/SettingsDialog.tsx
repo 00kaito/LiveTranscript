@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -24,6 +25,8 @@ export type TranscriptionSettings = {
   contextLength: number;
   temperature: number;
   silenceThreshold: number;
+  clarifyEnabled: boolean;
+  clarifySentenceCount: number;
 };
 
 export const DEFAULT_SETTINGS: TranscriptionSettings = {
@@ -32,9 +35,12 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   contextLength: 200,
   temperature: 0,
   silenceThreshold: 0.005,
+  clarifyEnabled: false,
+  clarifySentenceCount: 3,
 };
 
 const LANGUAGES = [
+  { value: "auto", label: "Auto-detect" },
   { value: "pl", label: "Polski" },
   { value: "en", label: "English" },
   { value: "de", label: "Deutsch" },
@@ -110,7 +116,7 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
               value={settings.language}
               onValueChange={(v) => update({ language: v })}
             >
-              <SelectTrigger data-testid="select-language">
+              <SelectTrigger className="bg-background" data-testid="select-language">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -181,6 +187,44 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
             <p className="text-xs text-muted-foreground">
               Audio quieter than this level is skipped. Increase if you get phantom transcriptions during silence.
             </p>
+          </div>
+
+          <div className="border-t border-border pt-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="space-y-1">
+                <Label>Clarify transcription</Label>
+                <p className="text-xs text-muted-foreground">
+                  Use AI to improve grammar and logic of transcribed sentences.
+                </p>
+              </div>
+              <Switch
+                checked={settings.clarifyEnabled}
+                onCheckedChange={(v) => update({ clarifyEnabled: v })}
+                data-testid="switch-clarify"
+              />
+            </div>
+
+            {settings.clarifyEnabled && (
+              <div className="space-y-3 pl-1">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-sm">Sentences per batch</Label>
+                  <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-clarify-count">
+                    {settings.clarifySentenceCount}
+                  </span>
+                </div>
+                <Slider
+                  value={[settings.clarifySentenceCount]}
+                  onValueChange={([v]) => update({ clarifySentenceCount: v })}
+                  min={1}
+                  max={10}
+                  step={1}
+                  data-testid="slider-clarify-count"
+                />
+                <p className="text-xs text-muted-foreground">
+                  How many sentences to collect before sending for grammar and logic correction.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </DialogContent>

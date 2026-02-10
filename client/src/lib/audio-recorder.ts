@@ -36,6 +36,7 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
 }
 
 export type AudioRecorderCallback = (wavBlob: Blob) => void;
+export type SilenceCallback = (isSilent: boolean) => void;
 
 export class ChunkedAudioRecorder {
   private stream: MediaStream | null = null;
@@ -46,13 +47,21 @@ export class ChunkedAudioRecorder {
   private isActive = false;
   private intervalId: number | null = null;
   private onChunk: AudioRecorderCallback;
+  private onSilenceChange: SilenceCallback | null;
   private chunkDurationMs: number;
   private silenceThreshold: number;
+  private lastSilentState: boolean | null = null;
 
-  constructor(onChunk: AudioRecorderCallback, chunkDurationMs = 3000, silenceThreshold = 0.005) {
+  constructor(
+    onChunk: AudioRecorderCallback,
+    chunkDurationMs = 3000,
+    silenceThreshold = 0.005,
+    onSilenceChange?: SilenceCallback,
+  ) {
     this.onChunk = onChunk;
     this.chunkDurationMs = chunkDurationMs;
     this.silenceThreshold = silenceThreshold;
+    this.onSilenceChange = onSilenceChange || null;
   }
 
   async start() {
@@ -104,7 +113,14 @@ export class ChunkedAudioRecorder {
       sumSquares += merged[i] * merged[i];
     }
     const rms = Math.sqrt(sumSquares / merged.length);
-    if (rms < this.silenceThreshold) return;
+    const isSilent = rms < this.silenceThreshold;
+
+    if (this.onSilenceChange && this.lastSilentState !== isSilent) {
+      this.lastSilentState = isSilent;
+      this.onSilenceChange(isSilent);
+    }
+
+    if (isSilent) return;
 
     const wavBlob = encodeWav(merged, this.audioContext?.sampleRate ?? SAMPLE_RATE);
     this.onChunk(wavBlob);

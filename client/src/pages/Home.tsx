@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranscribeChunk } from "@/hooks/use-transcription";
 import { Button } from "@/components/Button";
 import { LiveIndicator } from "@/components/LiveIndicator";
@@ -9,8 +9,19 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Copy, RefreshCw, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+function findSentenceEndings(text: string): number[] {
+  const endings: number[] = [];
+  const regex = /[.!?]+/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    endings.push(match.index + match[0].length);
+  }
+  return endings;
+}
+
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
+  const [isSilent, setIsSilent] = useState(true);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TranscriptionSettings>(() => {
@@ -23,6 +34,8 @@ export default function Home() {
   const transcriptRef = useRef("");
   const recorderRef = useRef<ChunkedAudioRecorder | null>(null);
   const settingsRef = useRef(settings);
+  const clarifiedUpToRef = useRef(0);
+  const clarifyingRef = useRef(false);
 
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
@@ -36,6 +49,57 @@ export default function Home() {
     settingsRef.current = settings;
     try { localStorage.setItem("transcription-settings", JSON.stringify(settings)); } catch {}
   }, [settings]);
+
+  const tryClarify = useCallback(async () => {
+    const s = settingsRef.current;
+    if (!s.clarifyEnabled || clarifyingRef.current) return;
+
+    const currentText = transcriptRef.current;
+    const unclarified = currentText.slice(clarifiedUpToRef.current);
+    const endings = findSentenceEndings(unclarified);
+
+    if (endings.length < s.clarifySentenceCount) return;
+
+    clarifyingRef.current = true;
+    try {
+      const endIdx = endings[s.clarifySentenceCount - 1];
+      const textToSend = unclarified.slice(0, endIdx).trim();
+      if (!textToSend) {
+        clarifyingRef.current = false;
+        return;
+      }
+
+      const absoluteStart = clarifiedUpToRef.current;
+      const absoluteEnd = absoluteStart + endIdx;
+
+      const res = await fetch("/api/clarify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: textToSend, language: s.language }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const clarifiedText = data.text;
+
+        setTranscript((prev) => {
+          const original = prev.slice(absoluteStart, absoluteEnd);
+          if (original.trim() !== textToSend) return prev;
+
+          const before = prev.slice(0, absoluteStart);
+          const after = prev.slice(absoluteEnd);
+          const newText = before + clarifiedText + after;
+
+          clarifiedUpToRef.current = (before + clarifiedText).length;
+          return newText;
+        });
+      }
+    } catch (err) {
+      console.error("Clarify error:", err);
+    } finally {
+      clarifyingRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     handleChunkRef.current = async (wavBlob: Blob) => {
@@ -89,6 +153,8 @@ export default function Home() {
             const needsSpace = !prev.endsWith(" ") && !unique.startsWith(" ");
             return prev + (needsSpace ? " " : "") + unique;
           });
+
+          tryClarify();
         }
       } catch (err: any) {
         console.error("Transcription chunk error:", err);
@@ -100,10 +166,13 @@ export default function Home() {
   const startRecording = async () => {
     try {
       setError(null);
+      setIsSilent(true);
+      clarifiedUpToRef.current = transcriptRef.current.length;
       const recorder = new ChunkedAudioRecorder(
         (blob) => handleChunkRef.current(blob),
         settings.chunkDuration * 1000,
-        settings.silenceThreshold
+        settings.silenceThreshold,
+        (silent) => setIsSilent(silent),
       );
       await recorder.start();
       recorderRef.current = recorder;
@@ -129,11 +198,13 @@ export default function Home() {
       recorderRef.current = null;
     }
     setIsRecording(false);
+    setIsSilent(true);
   };
 
   const clearTranscript = () => {
     if (confirm("Are you sure you want to clear the transcript?")) {
       setTranscript("");
+      clarifiedUpToRef.current = 0;
     }
   };
 
@@ -255,14 +326,18 @@ export default function Home() {
                     </div>
                     <Button
                       onClick={stopRecording}
-                      variant="destructive"
+                      variant={isSilent ? "secondary" : "destructive"}
                       size="lg"
-                      className="rounded-full w-16 h-16 p-0 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
+                      className={`rounded-full transition-all duration-300 ${
+                        isSilent ? "opacity-60" : ""
+                      }`}
                       data-testid="button-stop"
                     >
                       <Square className="w-6 h-6 fill-current" />
                     </Button>
-                    <span className="text-sm font-medium text-muted-foreground">Tap to stop</span>
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {isSilent ? "Waiting for speech..." : "Recording — tap to stop"}
+                    </span>
                   </motion.div>
                 ) : (
                   <motion.div
@@ -278,10 +353,10 @@ export default function Home() {
                     <Button
                       onClick={startRecording}
                       size="lg"
-                      className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-gradient-to-br from-primary to-blue-600 shadow-xl shadow-primary/30 hover:shadow-2xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-transform"
+                      className="rounded-full"
                       data-testid="button-start"
                     >
-                      <Mic className="w-7 h-7" />
+                      <Mic className="w-6 h-6" />
                     </Button>
                     <span className="text-sm font-medium text-muted-foreground">Tap to record</span>
                   </motion.div>

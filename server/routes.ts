@@ -34,13 +34,18 @@ export async function registerRoutes(
       const buffer = await fs.promises.readFile(tempFilePath);
       const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
 
-      const response = await openai.audio.transcriptions.create({
+      const transcribeParams: any = {
         file: file,
         model: "gpt-4o-mini-transcribe",
         prompt: prompt,
-        language: language,
         temperature: temperature,
-      });
+      };
+
+      if (language !== "auto") {
+        transcribeParams.language = language;
+      }
+
+      const response = await openai.audio.transcriptions.create(transcribeParams);
 
       console.log(`[Transcribe] Result: "${response.text}"`);
       res.json({ text: response.text });
@@ -52,6 +57,41 @@ export async function registerRoutes(
       if (tempFilePath) {
         fs.unlink(tempFilePath, () => {});
       }
+    }
+  });
+
+  app.post("/api/clarify", async (req, res) => {
+    try {
+      const { text, language } = req.body;
+
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ message: "No text provided" });
+      }
+
+      const langHint = language && language !== "auto" ? ` The text is in ${language} language.` : "";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a text editor that fixes grammar, punctuation, and logical errors in transcribed speech. Keep the original meaning and language intact. Do not add new information or change the intent. Only fix grammar, spelling, punctuation, and sentence structure to make the text more readable.${langHint} Return only the corrected text without any explanation or extra commentary.`,
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ],
+        temperature: 0.3,
+      });
+
+      const clarified = response.choices[0]?.message?.content?.trim() || text;
+      console.log(`[Clarify] Input: "${text.slice(0, 100)}..." -> Output: "${clarified.slice(0, 100)}..."`);
+      res.json({ text: clarified });
+
+    } catch (error: any) {
+      console.error("[Clarify] Error:", error.message || error);
+      res.status(500).json({ message: error.message || "Clarification failed" });
     }
   });
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a real-time audio transcription web application. Users can record audio through their browser microphone, which gets chunked and sent to the server for transcription using OpenAI's speech-to-text API (specifically `gpt-4o-mini-transcribe`). The transcribed text appears live on screen as the user speaks. The app is configured for Polish language transcription (`language: "pl"`).
+This is a real-time audio transcription web application. Users can record audio through their browser microphone, which gets chunked and sent to the server for transcription using OpenAI's speech-to-text API (specifically `gpt-4o-mini-transcribe`). The transcribed text appears live on screen as the user speaks. Supports multiple languages including auto-detection. Features configurable settings (chunk duration, language, context length, temperature, silence threshold) persisted in localStorage. Includes an AI "Clarify" feature that sends batches of transcribed sentences to GPT-4o-mini for grammar/logic correction.
 
 The project follows a monorepo structure with a React frontend (Vite) and an Express backend, sharing types and schemas through a `shared/` directory.
 
