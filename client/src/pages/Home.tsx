@@ -15,6 +15,7 @@ export default function Home() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const transcriptRef = useRef(""); 
+  const isRecordingRef = useRef(false);
   
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
@@ -23,32 +24,42 @@ export default function Home() {
     transcriptRef.current = transcript;
   }, [transcript]);
 
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
   const startRecording = async () => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setStream(audioStream);
 
-      // We need to restart the recorder for every chunk to get a valid header
-      // Using mediaRecorder.start(CHUNK_DURATION_MS) causes issues because 
-      // subsequent blobs are just raw data without the container header (WebM/OGG)
-      // Whisper needs the header to decode.
-      
-      const createRecorder = () => {
+      const processNextChunk = () => {
+        if (!audioStream.active || !isRecordingRef.current) {
+          console.log("Stream not active or recording stopped, skipping chunk");
+          return;
+        }
+        
+        console.log("Starting new chunk recorder...");
         const recorder = new MediaRecorder(audioStream, {
           mimeType: 'audio/webm;codecs=opus'
         });
+        
+        mediaRecorderRef.current = recorder;
 
         recorder.ondataavailable = async (event) => {
-          if (event.data.size > 0 && isRecording) {
+          console.log("Data available:", event.data.size, "bytes");
+          if (event.data.size > 0 && isRecordingRef.current) {
             const chunkBlob = event.data;
             const prompt = transcriptRef.current.slice(-200);
 
             try {
+              console.log("Sending chunk to backend...");
               const result = await transcribeMutation.mutateAsync({
                 audioBlob: chunkBlob,
                 prompt
               });
 
+              console.log("Received transcription result:", result.text);
               if (result.text) {
                 setTranscript(prev => {
                   const needsSpace = prev.length > 0 && !prev.endsWith(' ') && !result.text.startsWith(' ');
@@ -61,26 +72,26 @@ export default function Home() {
           }
         };
 
-        return recorder;
-      };
+        recorder.onstop = () => {
+          console.log("Recorder stopped");
+          if (isRecordingRef.current) {
+            console.log("Starting next chunk...");
+            processNextChunk();
+          }
+        };
 
-      const processNextChunk = () => {
-        if (!audioStream.active) return;
-        
-        const recorder = createRecorder();
-        mediaRecorderRef.current = recorder;
         recorder.start();
 
         setTimeout(() => {
           if (recorder.state === "recording") {
+            console.log("Stopping current chunk recorder for rotation...");
             recorder.stop();
-            // Start next chunk immediately
-            processNextChunk();
           }
         }, CHUNK_DURATION_MS);
       };
 
       setIsRecording(true);
+      isRecordingRef.current = true;
       processNextChunk();
       
       toast({
@@ -99,7 +110,9 @@ export default function Home() {
   };
 
   const stopRecording = () => {
+    console.log("Stopping recording...");
     setIsRecording(false);
+    isRecordingRef.current = false;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }

@@ -4,7 +4,6 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import OpenAI, { toFile } from "openai";
-import { storage } from "./storage";
 
 // Configure OpenAI
 const openai = new OpenAI({
@@ -30,14 +29,17 @@ export async function registerRoutes(
 
       tempFilePath = req.file.path;
       const prompt = req.body.prompt || "";
-      console.log(`Transcribing chunk: ${tempFilePath}, size: ${req.file.size} bytes`);
+      console.log(`[Backend] Transcribing chunk: ${tempFilePath}, size: ${req.file.size} bytes`);
 
       // OpenAI requires a filename with a supported extension (e.g., .webm, .wav, .mp3)
       // to correctly identify the file format. Multer's default temp filenames have no extension.
       const buffer = await fs.promises.readFile(tempFilePath);
-      const file = await toFile(buffer, "audio.webm");
+      console.log(`[Backend] File read into buffer, length: ${buffer.length}`);
+      
+      const file = await toFile(buffer, "audio.webm", { type: "audio/webm" });
 
       try {
+        console.log(`[Backend] Sending request to OpenAI with prompt: "${prompt.slice(-50)}..."`);
         const response = await openai.audio.transcriptions.create({
           file: file,
           model: "gpt-4o-mini-transcribe",
@@ -45,20 +47,21 @@ export async function registerRoutes(
           language: "pl",
         });
 
+        console.log(`[Backend] OpenAI response received: "${response.text}"`);
         res.json({ text: response.text });
       } catch (openaiError: any) {
-        console.error("OpenAI Transcription Error:", openaiError);
+        console.error("[Backend] OpenAI Transcription Error:", openaiError);
         res.status(500).json({ message: openaiError.message || "Transcription failed" });
       }
 
     } catch (error: any) {
-      console.error("Server Transcription Route Error:", error);
+      console.error("[Backend] Server Transcription Route Error:", error);
       res.status(500).json({ message: error.message || "Internal Server Error" });
     } finally {
-      // Clean up temp file in finally block to ensure it's always deleted
+      // Clean up temp file
       if (tempFilePath) {
         fs.unlink(tempFilePath, (err) => {
-          if (err) console.error("Error deleting temp file:", err);
+          if (err) console.error("[Backend] Error deleting temp file:", err);
         });
       }
     }
