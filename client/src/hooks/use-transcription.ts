@@ -1,31 +1,27 @@
 import { useMutation } from "@tanstack/react-query";
-import { api } from "@shared/routes";
-import { z } from "zod";
 
-// We define the input type manually since it's FormData
 type TranscribeInput = {
   audioBlob: Blob;
   prompt?: string;
 };
 
-// Response schema from routes manifest
-const transcribeResponseSchema = api.transcribe.process.responses[200];
+type TranscribeResult = {
+  text: string;
+};
 
 export function useTranscribeChunk() {
   return useMutation({
-    mutationFn: async ({ audioBlob, prompt }: TranscribeInput) => {
+    mutationFn: async ({ audioBlob, prompt }: TranscribeInput): Promise<TranscribeResult> => {
       const formData = new FormData();
-      // Send as 'file' to match backend expectation
-      formData.append("file", audioBlob, "chunk.webm");
+      formData.append("file", audioBlob, "chunk.wav");
       
       if (prompt) {
         formData.append("prompt", prompt);
       }
 
-      const res = await fetch(api.transcribe.process.path, {
-        method: api.transcribe.process.method,
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
         body: formData,
-        // No Content-Type header needed; fetch sets multipart/form-data boundary automatically
       });
 
       if (!res.ok) {
@@ -34,13 +30,13 @@ export function useTranscribeChunk() {
           const errorData = await res.json();
           errorMessage = errorData.message || errorMessage;
         } catch {
-          // ignore json parse error
+          // ignore
         }
         throw new Error(errorMessage);
       }
 
       const data = await res.json();
-      return transcribeResponseSchema.parse(data);
+      return data as TranscribeResult;
     },
   });
 }
