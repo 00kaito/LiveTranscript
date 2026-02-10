@@ -2,13 +2,11 @@ import type { Express } from "express";
 import type { Server } from "http";
 import multer from "multer";
 import fs from "fs";
-import OpenAI from "openai";
+import path from "path";
+import OpenAI, { toFile } from "openai";
 import { storage } from "./storage";
 
 // Configure OpenAI
-// This uses Replit AI Integrations which don't require a manual API key.
-// The environment variables AI_INTEGRATIONS_OPENAI_API_KEY and AI_INTEGRATIONS_OPENAI_BASE_URL
-// are automatically provided by the integration.
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || "dummy-key",
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -23,43 +21,46 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.post("/api/transcribe", upload.single("file"), async (req, res) => {
+    let tempFilePath: string | undefined;
     try {
       if (!req.file) {
         console.error("No file in request");
         return res.status(400).json({ message: "No file uploaded" });
       }
 
+      tempFilePath = req.file.path;
       const prompt = req.body.prompt || "";
-      console.log(`Transcribing chunk: ${req.file.path}, size: ${req.file.size} bytes`);
+      console.log(`Transcribing chunk: ${tempFilePath}, size: ${req.file.size} bytes`);
 
-      // Create a read stream from the temporary file
-      const fileStream = fs.createReadStream(req.file.path);
+      // OpenAI requires a filename with a supported extension (e.g., .webm, .wav, .mp3)
+      // to correctly identify the file format. Multer's default temp filenames have no extension.
+      const buffer = await fs.promises.readFile(tempFilePath);
+      const file = await toFile(buffer, "audio.webm");
 
       try {
         const response = await openai.audio.transcriptions.create({
-          file: fileStream,
+          file: file,
           model: "gpt-4o-mini-transcribe",
           prompt: prompt,
           language: "pl",
         });
 
-        // Clean up temp file
-        fs.unlink(req.file.path, (err) => {
-          if (err) console.error("Error deleting temp file:", err);
-        });
-
         res.json({ text: response.text });
       } catch (openaiError: any) {
         console.error("OpenAI Transcription Error:", openaiError);
-        // Clean up temp file even on error
-        fs.unlink(req.file.path, () => {});
         res.status(500).json({ message: openaiError.message || "Transcription failed" });
       }
 
     } catch (error: any) {
       console.error("Server Transcription Route Error:", error);
-      if (req.file) fs.unlink(req.file.path, () => {});
       res.status(500).json({ message: error.message || "Internal Server Error" });
+    } finally {
+      // Clean up temp file in finally block to ensure it's always deleted
+      if (tempFilePath) {
+        fs.unlink(tempFilePath, (err) => {
+          if (err) console.error("Error deleting temp file:", err);
+        });
+      }
     }
   });
 
