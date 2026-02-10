@@ -1,0 +1,189 @@
+import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Settings } from "lucide-react";
+
+export type TranscriptionSettings = {
+  chunkDuration: number;
+  language: string;
+  contextLength: number;
+  temperature: number;
+  silenceThreshold: number;
+};
+
+export const DEFAULT_SETTINGS: TranscriptionSettings = {
+  chunkDuration: 3,
+  language: "pl",
+  contextLength: 200,
+  temperature: 0,
+  silenceThreshold: 0.005,
+};
+
+const LANGUAGES = [
+  { value: "pl", label: "Polski" },
+  { value: "en", label: "English" },
+  { value: "de", label: "Deutsch" },
+  { value: "fr", label: "Francais" },
+  { value: "es", label: "Espanol" },
+  { value: "it", label: "Italiano" },
+  { value: "pt", label: "Portugues" },
+  { value: "nl", label: "Nederlands" },
+  { value: "cs", label: "Cestina" },
+  { value: "uk", label: "Ukrainska" },
+  { value: "ru", label: "Russkij" },
+  { value: "ja", label: "Nihongo" },
+  { value: "zh", label: "Zhongwen" },
+  { value: "ko", label: "Hangugeo" },
+];
+
+type Props = {
+  settings: TranscriptionSettings;
+  onChange: (settings: TranscriptionSettings) => void;
+  disabled?: boolean;
+};
+
+export function SettingsDialog({ settings, onChange, disabled }: Props) {
+  const [open, setOpen] = useState(false);
+
+  const update = (partial: Partial<TranscriptionSettings>) => {
+    onChange({ ...settings, ...partial });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+          disabled={disabled}
+          data-testid="button-settings"
+        >
+          <Settings className="w-5 h-5" />
+        </button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Transcription Settings</DialogTitle>
+          <DialogDescription>
+            Configure audio recording and transcription parameters.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-6 py-2">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Chunk duration</Label>
+              <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-chunk-value">
+                {settings.chunkDuration}s
+              </span>
+            </div>
+            <Slider
+              value={[settings.chunkDuration]}
+              onValueChange={([v]) => update({ chunkDuration: v })}
+              min={1}
+              max={10}
+              step={1}
+              data-testid="slider-chunk-duration"
+            />
+            <p className="text-xs text-muted-foreground">
+              How often audio is sent for transcription. Shorter = more responsive, longer = more context per chunk.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <Label>Language</Label>
+            <Select
+              value={settings.language}
+              onValueChange={(v) => update({ language: v })}
+            >
+              <SelectTrigger data-testid="select-language">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((lang) => (
+                  <SelectItem key={lang.value} value={lang.value} data-testid={`option-lang-${lang.value}`}>
+                    {lang.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Context length</Label>
+              <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-context-value">
+                {settings.contextLength} chars
+              </span>
+            </div>
+            <Slider
+              value={[settings.contextLength]}
+              onValueChange={([v]) => update({ contextLength: v })}
+              min={0}
+              max={500}
+              step={50}
+              data-testid="slider-context-length"
+            />
+            <p className="text-xs text-muted-foreground">
+              Amount of previous transcript sent as context. Helps maintain continuity between chunks.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Temperature</Label>
+              <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-temperature-value">
+                {settings.temperature.toFixed(1)}
+              </span>
+            </div>
+            <Slider
+              value={[settings.temperature]}
+              onValueChange={([v]) => update({ temperature: v })}
+              min={0}
+              max={1}
+              step={0.1}
+              data-testid="slider-temperature"
+            />
+            <p className="text-xs text-muted-foreground">
+              Lower = more deterministic transcription. Higher = more creative interpretation.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Silence threshold</Label>
+              <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-silence-value">
+                {settings.silenceThreshold.toFixed(3)}
+              </span>
+            </div>
+            <Slider
+              value={[settings.silenceThreshold]}
+              onValueChange={([v]) => update({ silenceThreshold: parseFloat(v.toFixed(3)) })}
+              min={0.001}
+              max={0.05}
+              step={0.001}
+              data-testid="slider-silence-threshold"
+            />
+            <p className="text-xs text-muted-foreground">
+              Audio quieter than this level is skipped. Increase if you get phantom transcriptions during silence.
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

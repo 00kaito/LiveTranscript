@@ -3,6 +3,7 @@ import { useTranscribeChunk } from "@/hooks/use-transcription";
 import { Button } from "@/components/Button";
 import { LiveIndicator } from "@/components/LiveIndicator";
 import { AudioVisualizer } from "@/components/AudioVisualizer";
+import { SettingsDialog, DEFAULT_SETTINGS, type TranscriptionSettings } from "@/components/SettingsDialog";
 import { ChunkedAudioRecorder } from "@/lib/audio-recorder";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Copy, RefreshCw, AlertCircle } from "lucide-react";
@@ -12,8 +13,16 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<TranscriptionSettings>(() => {
+    try {
+      const saved = localStorage.getItem("transcription-settings");
+      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_SETTINGS;
+  });
   const transcriptRef = useRef("");
   const recorderRef = useRef<ChunkedAudioRecorder | null>(null);
+  const settingsRef = useRef(settings);
 
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
@@ -24,13 +33,21 @@ export default function Home() {
   }, [transcript]);
 
   useEffect(() => {
+    settingsRef.current = settings;
+    try { localStorage.setItem("transcription-settings", JSON.stringify(settings)); } catch {}
+  }, [settings]);
+
+  useEffect(() => {
     handleChunkRef.current = async (wavBlob: Blob) => {
-      const prompt = transcriptRef.current.slice(-200);
+      const s = settingsRef.current;
+      const prompt = transcriptRef.current.slice(-s.contextLength);
       try {
         setError(null);
         const result = await transcribeMutation.mutateAsync({
           audioBlob: wavBlob,
           prompt,
+          language: s.language,
+          temperature: s.temperature,
         });
         if (result.text && result.text.trim()) {
           setTranscript((prev) => {
@@ -85,7 +102,8 @@ export default function Home() {
       setError(null);
       const recorder = new ChunkedAudioRecorder(
         (blob) => handleChunkRef.current(blob),
-        3000
+        settings.chunkDuration * 1000,
+        settings.silenceThreshold
       );
       await recorder.start();
       recorderRef.current = recorder;
@@ -142,7 +160,7 @@ export default function Home() {
             </div>
             <h1 className="text-xl font-display font-bold text-foreground" data-testid="text-app-title">LiveScribe</h1>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <AnimatePresence>
               {isRecording && (
                 <motion.div
@@ -154,6 +172,11 @@ export default function Home() {
                 </motion.div>
               )}
             </AnimatePresence>
+            <SettingsDialog
+              settings={settings}
+              onChange={setSettings}
+              disabled={isRecording}
+            />
           </div>
         </div>
       </header>

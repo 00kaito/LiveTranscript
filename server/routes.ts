@@ -25,7 +25,11 @@ export async function registerRoutes(
 
       tempFilePath = req.file.path;
       const prompt = req.body.prompt || "";
-      console.log(`[Transcribe] Chunk received: ${req.file.size} bytes`);
+      const language = req.body.language || "pl";
+      const temperature = req.body.temperature !== undefined
+        ? parseFloat(req.body.temperature)
+        : 0;
+      console.log(`[Transcribe] Chunk received: ${req.file.size} bytes, lang=${language}, temp=${temperature}`);
 
       const buffer = await fs.promises.readFile(tempFilePath);
       const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
@@ -34,7 +38,8 @@ export async function registerRoutes(
         file: file,
         model: "gpt-4o-mini-transcribe",
         prompt: prompt,
-        language: "pl",
+        language: language,
+        temperature: temperature,
       });
 
       console.log(`[Transcribe] Result: "${response.text}"`);

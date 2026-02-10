@@ -47,10 +47,12 @@ export class ChunkedAudioRecorder {
   private intervalId: number | null = null;
   private onChunk: AudioRecorderCallback;
   private chunkDurationMs: number;
+  private silenceThreshold: number;
 
-  constructor(onChunk: AudioRecorderCallback, chunkDurationMs = 3000) {
+  constructor(onChunk: AudioRecorderCallback, chunkDurationMs = 3000, silenceThreshold = 0.005) {
     this.onChunk = onChunk;
     this.chunkDurationMs = chunkDurationMs;
+    this.silenceThreshold = silenceThreshold;
   }
 
   async start() {
@@ -102,7 +104,7 @@ export class ChunkedAudioRecorder {
       sumSquares += merged[i] * merged[i];
     }
     const rms = Math.sqrt(sumSquares / merged.length);
-    if (rms < 0.005) return;
+    if (rms < this.silenceThreshold) return;
 
     const wavBlob = encodeWav(merged, this.audioContext?.sampleRate ?? SAMPLE_RATE);
     this.onChunk(wavBlob);

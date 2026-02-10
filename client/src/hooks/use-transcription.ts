@@ -3,6 +3,8 @@ import { useMutation } from "@tanstack/react-query";
 type TranscribeInput = {
   audioBlob: Blob;
   prompt?: string;
+  language?: string;
+  temperature?: number;
 };
 
 type TranscribeResult = {
@@ -11,12 +13,18 @@ type TranscribeResult = {
 
 export function useTranscribeChunk() {
   return useMutation({
-    mutationFn: async ({ audioBlob, prompt }: TranscribeInput): Promise<TranscribeResult> => {
+    mutationFn: async ({ audioBlob, prompt, language, temperature }: TranscribeInput): Promise<TranscribeResult> => {
       const formData = new FormData();
       formData.append("file", audioBlob, "chunk.wav");
       
       if (prompt) {
         formData.append("prompt", prompt);
+      }
+      if (language) {
+        formData.append("language", language);
+      }
+      if (temperature !== undefined) {
+        formData.append("temperature", String(temperature));
       }
 
       const res = await fetch("/api/transcribe", {
@@ -30,7 +38,6 @@ export function useTranscribeChunk() {
           const errorData = await res.json();
           errorMessage = errorData.message || errorMessage;
         } catch {
-          // ignore
         }
         throw new Error(errorMessage);
       }
