@@ -275,7 +275,7 @@ export default function Home() {
 
           {transcript && (
             <div className="absolute top-4 right-4 flex gap-1">
-              <SummaryDialog transcript={transcript} language={settings.language} />
+              <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
               <button
                 onClick={copyToClipboard}
                 className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"

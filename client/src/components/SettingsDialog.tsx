@@ -27,7 +27,24 @@ export type TranscriptionSettings = {
   silenceThreshold: number;
   clarifyEnabled: boolean;
   clarifySentenceCount: number;
+  summaryPrompt: string;
 };
+
+export const DEFAULT_SUMMARY_PROMPT = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
+
+## Summary
+A concise overview of the entire meeting (2-4 sentences).
+
+## Key Points
+A bullet list of the most important topics discussed and decisions made.
+
+## Goals
+A bullet list of goals or objectives mentioned during the meeting.
+
+## Action Items
+A bullet list of specific tasks, assignments, or next steps to be taken. Include who is responsible if mentioned.
+
+If a section has no relevant content, write "None identified." Keep the language professional and clear.`;
 
 export const DEFAULT_SETTINGS: TranscriptionSettings = {
   chunkDuration: 3,
@@ -37,6 +54,7 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   silenceThreshold: 0.005,
   clarifyEnabled: false,
   clarifySentenceCount: 3,
+  summaryPrompt: "",
 };
 
 const LANGUAGES = [
@@ -225,6 +243,23 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
                 </p>
               </div>
             )}
+          </div>
+
+          <div className="border-t border-border pt-4 space-y-3">
+            <div className="space-y-1">
+              <Label>Summary prompt</Label>
+              <p className="text-xs text-muted-foreground">
+                Custom instructions for AI when generating meeting summaries. Leave empty to use the default prompt.
+              </p>
+            </div>
+            <textarea
+              value={settings.summaryPrompt}
+              onChange={(e) => update({ summaryPrompt: e.target.value })}
+              placeholder={DEFAULT_SUMMARY_PROMPT}
+              rows={5}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 resize-y"
+              data-testid="textarea-summary-prompt"
+            />
           </div>
         </div>
       </DialogContent>

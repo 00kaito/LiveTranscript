@@ -13,9 +13,10 @@ import { useToast } from "@/hooks/use-toast";
 type Props = {
   transcript: string;
   language: string;
+  customPrompt?: string;
 };
 
-export function SummaryDialog({ transcript, language }: Props) {
+export function SummaryDialog({ transcript, language, customPrompt }: Props) {
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,7 +31,7 @@ export function SummaryDialog({ transcript, language }: Props) {
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: transcript, language }),
+        body: JSON.stringify({ text: transcript, language, customPrompt: customPrompt || undefined }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

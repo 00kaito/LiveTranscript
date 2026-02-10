@@ -97,7 +97,7 @@ export async function registerRoutes(
 
   app.post("/api/summarize", async (req, res) => {
     try {
-      const { text, language } = req.body;
+      const { text, language, customPrompt } = req.body;
 
       if (!text || typeof text !== "string" || text.trim().length < 20) {
         return res.status(400).json({ message: "Not enough transcript text to summarize" });
@@ -105,12 +105,7 @@ export async function registerRoutes(
 
       const langHint = language && language !== "auto" ? ` Respond in ${language} language.` : "";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
+      const defaultPrompt = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
 
 ## Summary
 A concise overview of the entire meeting (2-4 sentences).
@@ -124,7 +119,18 @@ A bullet list of goals or objectives mentioned during the meeting.
 ## Action Items
 A bullet list of specific tasks, assignments, or next steps to be taken. Include who is responsible if mentioned.
 
-If a section has no relevant content, write "None identified." Keep the language professional and clear.${langHint}`,
+If a section has no relevant content, write "None identified." Keep the language professional and clear.`;
+
+      const systemPrompt = (customPrompt && typeof customPrompt === "string" && customPrompt.trim())
+        ? customPrompt.trim() + langHint
+        : defaultPrompt + langHint;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
           },
           {
             role: "user",
