@@ -168,6 +168,47 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/translate", async (req, res) => {
+    try {
+      const { text, targetLanguage, sourceLanguage } = req.body;
+
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ message: "No text provided" });
+      }
+
+      if (!targetLanguage || typeof targetLanguage !== "string") {
+        return res.status(400).json({ message: "No target language provided" });
+      }
+
+      const sourceLangHint = sourceLanguage && sourceLanguage !== "auto"
+        ? ` The source text is in ${sourceLanguage}.`
+        : "";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional translator. Translate the following text to ${targetLanguage}.${sourceLangHint} Preserve the original meaning, tone, and formatting. Return only the translated text without any explanation, commentary, or notes.`,
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ],
+        temperature: 0.3,
+      });
+
+      const translated = response.choices[0]?.message?.content?.trim() || text;
+      console.log(`[Translate] "${text.slice(0, 60)}..." -> "${translated.slice(0, 60)}..." (to ${targetLanguage})`);
+      res.json({ text: translated });
+
+    } catch (error: any) {
+      console.error("[Translate] Error:", error.message || error);
+      res.status(500).json({ message: error.message || "Translation failed" });
+    }
+  });
+
   app.post("/api/summarize", async (req, res) => {
     try {
       const { text, language, customPrompt } = req.body;

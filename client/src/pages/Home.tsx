@@ -6,7 +6,7 @@ import { AudioVisualizer } from "@/components/AudioVisualizer";
 import { SettingsDialog, DEFAULT_SETTINGS, type TranscriptionSettings } from "@/components/SettingsDialog";
 import { ChunkedAudioRecorder } from "@/lib/audio-recorder";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Copy, RefreshCw, AlertCircle } from "lucide-react";
+import { Mic, Square, Copy, RefreshCw, AlertCircle, Languages } from "lucide-react";
 import { SummaryDialog } from "@/components/SummaryDialog";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,12 +38,17 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [isSilent, setIsSilent] = useState(true);
   const [transcript, setTranscript] = useState("");
+  const [translation, setTranslation] = useState("");
   const [diarizedSegments, setDiarizedSegments] = useState<DiarizedSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TranscriptionSettings>(() => {
     try {
       const saved = localStorage.getItem("transcription-settings");
-      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      if (saved) {
+        const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        if (parsed.translatorEnabled) parsed.clarifyEnabled = true;
+        return parsed;
+      }
     } catch {}
     return DEFAULT_SETTINGS;
   });
@@ -52,6 +57,7 @@ export default function Home() {
   const settingsRef = useRef(settings);
   const clarifiedUpToRef = useRef(0);
   const clarifyingRef = useRef(false);
+  const translatedUpToRef = useRef(0);
 
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
@@ -66,6 +72,35 @@ export default function Home() {
     settingsRef.current = settings;
     try { localStorage.setItem("transcription-settings", JSON.stringify(settings)); } catch {}
   }, [settings]);
+
+  const tryTranslate = useCallback(async (clarifiedText: string) => {
+    const s = settingsRef.current;
+    if (!s.translatorEnabled || !clarifiedText.trim()) return;
+
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: clarifiedText,
+          targetLanguage: s.translatorLanguage,
+          sourceLanguage: s.language,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text) {
+          setTranslation((prev) => {
+            if (prev.length === 0) return data.text;
+            return prev + " " + data.text;
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Translation error:", err);
+    }
+  }, []);
 
   const tryClarify = useCallback(async () => {
     const s = settingsRef.current;
@@ -110,13 +145,17 @@ export default function Home() {
           clarifiedUpToRef.current = (before + clarifiedText).length;
           return newText;
         });
+
+        if (s.translatorEnabled) {
+          await tryTranslate(clarifiedText);
+        }
       }
     } catch (err) {
       console.error("Clarify error:", err);
     } finally {
       clarifyingRef.current = false;
     }
-  }, []);
+  }, [tryTranslate]);
 
   useEffect(() => {
     handleChunkRef.current = async (wavBlob: Blob) => {
@@ -243,6 +282,7 @@ export default function Home() {
       setError(null);
       setIsSilent(true);
       clarifiedUpToRef.current = transcriptRef.current.length;
+      translatedUpToRef.current = 0;
       const recorder = new ChunkedAudioRecorder(
         (blob) => handleChunkRef.current(blob),
         settings.chunkDuration * 1000,
@@ -257,6 +297,8 @@ export default function Home() {
         title: "Microphone Active",
         description: settings.diarizeEnabled
           ? "Diarized transcription started. Speaker identification active."
+          : settings.translatorEnabled
+          ? "Transcription with live translation started."
           : "Transcription started. Speak clearly.",
       });
     } catch (err) {
@@ -281,30 +323,97 @@ export default function Home() {
   const clearTranscript = () => {
     if (confirm("Are you sure you want to clear the transcript?")) {
       setTranscript("");
+      setTranslation("");
       setDiarizedSegments([]);
       clarifiedUpToRef.current = 0;
+      translatedUpToRef.current = 0;
     }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(transcript);
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
     toast({
       title: "Copied!",
-      description: "Transcript copied to clipboard.",
+      description: `${label} copied to clipboard.`,
     });
   };
 
   const hasContent = transcript.length > 0 || diarizedSegments.length > 0;
+  const showTranslation = settings.translatorEnabled;
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const translationEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, diarizedSegments]);
+  useEffect(() => {
+    translationEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [translation]);
+
+  const renderTranscriptContent = () => {
+    if (settings.diarizeEnabled && diarizedSegments.length > 0) {
+      return (
+        <div className="space-y-3" data-testid="text-transcript">
+          {diarizedSegments.map((seg, i) => {
+            const color = getSpeakerColor(seg.speaker);
+            const prevSpeaker = i > 0 ? diarizedSegments[i - 1].speaker : null;
+            const showLabel = seg.speaker !== prevSpeaker;
+            return (
+              <div key={i} data-testid={`segment-speaker-${seg.speaker}-${i}`}>
+                {showLabel && (
+                  <div className="flex items-center gap-2 mb-1 mt-3 first:mt-0">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${color.badge}`}>
+                      Speaker {seg.speaker}
+                    </span>
+                  </div>
+                )}
+                <div className={`rounded-lg px-3 py-2 ${color.bg}`}>
+                  <p className={`leading-relaxed ${color.text}`}>{seg.text}</p>
+                </div>
+              </div>
+            );
+          })}
+          {isRecording && (
+            <span className="inline-block w-2 h-5 ml-1 bg-primary align-middle animate-cursor-blink" />
+          )}
+          <div ref={transcriptEndRef} />
+        </div>
+      );
+    }
+
+    if (transcript) {
+      return (
+        <div className="prose prose-lg max-w-none text-foreground leading-relaxed whitespace-pre-wrap" data-testid="text-transcript">
+          {transcript}
+          {isRecording && (
+            <span className="inline-block w-2 h-5 ml-1 bg-primary align-middle animate-cursor-blink" />
+          )}
+          <div ref={transcriptEndRef} />
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-20" data-testid="text-placeholder">
+        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+          <Mic className="w-8 h-8 opacity-50" />
+        </div>
+        <p className="text-lg font-medium">Ready to transcribe</p>
+        <p className="text-sm opacity-70 mt-2">Click the microphone button to start recording</p>
+      </div>
+    );
+  };
+
+  const LANG_LABELS: Record<string, string> = {
+    en: "English", pl: "Polski", de: "Deutsch", fr: "Francais", es: "Espanol",
+    it: "Italiano", pt: "Portugues", nl: "Nederlands", cs: "Cestina",
+    uk: "Ukrainska", ru: "Russkij", ja: "Nihongo", zh: "Zhongwen", ko: "Hangugeo",
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground font-body selection:bg-primary/20">
       <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className={`mx-auto px-4 sm:px-6 h-16 flex items-center justify-between ${showTranslation ? "max-w-7xl" : "max-w-4xl"}`}>
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
               <Mic className="w-5 h-5" />
@@ -332,74 +441,102 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="pt-24 pb-32 max-w-4xl mx-auto px-4 sm:px-6">
-        <div className="relative min-h-[60vh] bg-white dark:bg-card rounded-3xl border border-border shadow-sm p-8 md:p-12 mb-8 transition-shadow hover:shadow-md">
-          {settings.diarizeEnabled && diarizedSegments.length > 0 ? (
-            <div className="space-y-3" data-testid="text-transcript">
-              {diarizedSegments.map((seg, i) => {
-                const color = getSpeakerColor(seg.speaker);
-                const prevSpeaker = i > 0 ? diarizedSegments[i - 1].speaker : null;
-                const showLabel = seg.speaker !== prevSpeaker;
-                return (
-                  <div key={i} data-testid={`segment-speaker-${seg.speaker}-${i}`}>
-                    {showLabel && (
-                      <div className="flex items-center gap-2 mb-1 mt-3 first:mt-0">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${color.badge}`}>
-                          Speaker {seg.speaker}
-                        </span>
-                      </div>
-                    )}
-                    <div className={`rounded-lg px-3 py-2 ${color.bg}`}>
-                      <p className={`leading-relaxed ${color.text}`}>{seg.text}</p>
-                    </div>
-                  </div>
-                );
-              })}
-              {isRecording && (
-                <span className="inline-block w-2 h-5 ml-1 bg-primary align-middle animate-cursor-blink" />
-              )}
-              <div ref={transcriptEndRef} />
-            </div>
-          ) : transcript ? (
-            <div className="prose prose-lg max-w-none text-foreground leading-relaxed whitespace-pre-wrap" data-testid="text-transcript">
-              {transcript}
-              {isRecording && (
-                <span className="inline-block w-2 h-5 ml-1 bg-primary align-middle animate-cursor-blink" />
-              )}
-              <div ref={transcriptEndRef} />
-            </div>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-20" data-testid="text-placeholder">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-                <Mic className="w-8 h-8 opacity-50" />
+      <main className={`pt-24 pb-32 mx-auto px-4 sm:px-6 ${showTranslation ? "max-w-7xl" : "max-w-4xl"}`}>
+        {showTranslation ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+            <div className="relative min-h-[60vh] bg-white dark:bg-card rounded-3xl border border-border shadow-sm p-6 md:p-8 transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-border/50">
+                <Mic className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-muted-foreground" data-testid="text-panel-label-transcript">Transcription</span>
               </div>
-              <p className="text-lg font-medium">Ready to transcribe</p>
-              <p className="text-sm opacity-70 mt-2">Click the microphone button to start recording</p>
+              {renderTranscriptContent()}
+              {hasContent && (
+                <div className="absolute top-4 right-4 flex gap-1">
+                  <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
+                  <button
+                    onClick={() => copyToClipboard(transcript, "Transcript")}
+                    className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                    title="Copy transcript"
+                    data-testid="button-copy"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={clearTranscript}
+                    className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
+                    title="Clear all"
+                    data-testid="button-clear"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
-          )}
 
-          {hasContent && (
-            <div className="absolute top-4 right-4 flex gap-1">
-              <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
-              <button
-                onClick={copyToClipboard}
-                className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
-                title="Copy to clipboard"
-                data-testid="button-copy"
-              >
-                <Copy className="w-5 h-5" />
-              </button>
-              <button
-                onClick={clearTranscript}
-                className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
-                title="Clear transcript"
-                data-testid="button-clear"
-              >
-                <RefreshCw className="w-5 h-5" />
-              </button>
+            <div className="relative min-h-[60vh] bg-white dark:bg-card rounded-3xl border border-border shadow-sm p-6 md:p-8 transition-shadow hover:shadow-md">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-border/50">
+                <Languages className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium text-primary" data-testid="text-panel-label-translation">
+                  {LANG_LABELS[settings.translatorLanguage] || settings.translatorLanguage}
+                </span>
+              </div>
+              {translation ? (
+                <div className="prose prose-lg max-w-none text-foreground leading-relaxed whitespace-pre-wrap" data-testid="text-translation">
+                  {translation}
+                  {isRecording && (
+                    <span className="inline-block w-2 h-5 ml-1 bg-primary/60 align-middle animate-cursor-blink" />
+                  )}
+                  <div ref={translationEndRef} />
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-20" data-testid="text-translation-placeholder">
+                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                    <Languages className="w-8 h-8 opacity-50" />
+                  </div>
+                  <p className="text-lg font-medium">Translation will appear here</p>
+                  <p className="text-sm opacity-70 mt-2">Clarified text will be translated automatically</p>
+                </div>
+              )}
+              {translation && (
+                <div className="absolute top-4 right-4 flex gap-1">
+                  <button
+                    onClick={() => copyToClipboard(translation, "Translation")}
+                    className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                    title="Copy translation"
+                    data-testid="button-copy-translation"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="relative min-h-[60vh] bg-white dark:bg-card rounded-3xl border border-border shadow-sm p-8 md:p-12 mb-8 transition-shadow hover:shadow-md">
+            {renderTranscriptContent()}
+            {hasContent && (
+              <div className="absolute top-4 right-4 flex gap-1">
+                <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
+                <button
+                  onClick={() => copyToClipboard(transcript, "Transcript")}
+                  className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                  title="Copy to clipboard"
+                  data-testid="button-copy"
+                >
+                  <Copy className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={clearTranscript}
+                  className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
+                  title="Clear transcript"
+                  data-testid="button-clear"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && (
           <motion.div

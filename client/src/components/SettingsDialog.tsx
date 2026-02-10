@@ -29,6 +29,8 @@ export type TranscriptionSettings = {
   clarifySentenceCount: number;
   summaryPrompt: string;
   diarizeEnabled: boolean;
+  translatorEnabled: boolean;
+  translatorLanguage: string;
 };
 
 export const DEFAULT_SUMMARY_PROMPT = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
@@ -57,12 +59,31 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   clarifySentenceCount: 3,
   summaryPrompt: "",
   diarizeEnabled: false,
+  translatorEnabled: false,
+  translatorLanguage: "en",
 };
 
 const LANGUAGES = [
   { value: "auto", label: "Auto-detect" },
   { value: "pl", label: "Polski" },
   { value: "en", label: "English" },
+  { value: "de", label: "Deutsch" },
+  { value: "fr", label: "Francais" },
+  { value: "es", label: "Espanol" },
+  { value: "it", label: "Italiano" },
+  { value: "pt", label: "Portugues" },
+  { value: "nl", label: "Nederlands" },
+  { value: "cs", label: "Cestina" },
+  { value: "uk", label: "Ukrainska" },
+  { value: "ru", label: "Russkij" },
+  { value: "ja", label: "Nihongo" },
+  { value: "zh", label: "Zhongwen" },
+  { value: "ko", label: "Hangugeo" },
+];
+
+const TRANSLATOR_LANGUAGES = [
+  { value: "en", label: "English" },
+  { value: "pl", label: "Polski" },
   { value: "de", label: "Deutsch" },
   { value: "fr", label: "Francais" },
   { value: "es", label: "Espanol" },
@@ -87,7 +108,11 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
   const [open, setOpen] = useState(false);
 
   const update = (partial: Partial<TranscriptionSettings>) => {
-    onChange({ ...settings, ...partial });
+    const next = { ...settings, ...partial };
+    if (partial.translatorEnabled && !settings.translatorEnabled) {
+      next.clarifyEnabled = true;
+    }
+    onChange(next);
   };
 
   return (
@@ -231,11 +256,15 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
                 <Label>Clarify transcription</Label>
                 <p className="text-xs text-muted-foreground">
                   Use AI to improve grammar and logic of transcribed sentences.
+                  {settings.translatorEnabled && (
+                    <span className="text-primary"> (Required by translator)</span>
+                  )}
                 </p>
               </div>
               <Switch
                 checked={settings.clarifyEnabled}
                 onCheckedChange={(v) => update({ clarifyEnabled: v })}
+                disabled={settings.translatorEnabled}
                 data-testid="switch-clarify"
               />
             </div>
@@ -259,6 +288,43 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
                 <p className="text-xs text-muted-foreground">
                   How many sentences to collect before sending for grammar and logic correction.
                 </p>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="space-y-1">
+                <Label>Live translator</Label>
+                <p className="text-xs text-muted-foreground">
+                  Translate clarified text in real-time to another language. Shows a second panel with translations. Automatically enables text clarification.
+                </p>
+              </div>
+              <Switch
+                checked={settings.translatorEnabled}
+                onCheckedChange={(v) => update({ translatorEnabled: v })}
+                data-testid="switch-translator"
+              />
+            </div>
+
+            {settings.translatorEnabled && (
+              <div className="space-y-3 pl-1">
+                <Label className="text-sm">Translate to</Label>
+                <Select
+                  value={settings.translatorLanguage}
+                  onValueChange={(v) => update({ translatorLanguage: v })}
+                >
+                  <SelectTrigger className="bg-background" data-testid="select-translator-language">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TRANSLATOR_LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value} data-testid={`option-translator-lang-${lang.value}`}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
           </div>
