@@ -78,9 +78,12 @@ export default function Home() {
     if (!s.translatorEnabled || !clarifiedText.trim()) return;
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (s.openaiApiKey) headers["X-OpenAI-Key"] = s.openaiApiKey;
+
       const res = await fetch("/api/translate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           text: clarifiedText,
           targetLanguage: s.translatorLanguage,
@@ -124,9 +127,12 @@ export default function Home() {
       const absoluteStart = clarifiedUpToRef.current;
       const absoluteEnd = absoluteStart + endIdx;
 
+      const clarifyHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (s.openaiApiKey) clarifyHeaders["X-OpenAI-Key"] = s.openaiApiKey;
+
       const res = await fetch("/api/clarify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: clarifyHeaders,
         body: JSON.stringify({ text: textToSend, language: s.language }),
       });
 
@@ -167,6 +173,7 @@ export default function Home() {
           const result = await diarizeMutation.mutateAsync({
             audioBlob: wavBlob,
             language: s.language,
+            apiKey: s.openaiApiKey || undefined,
           });
 
           if (result.segments && result.segments.length > 0) {
@@ -226,6 +233,7 @@ export default function Home() {
           prompt,
           language: s.language,
           temperature: s.temperature,
+          apiKey: s.openaiApiKey || undefined,
         });
         if (result.text && result.text.trim()) {
           setTranscript((prev) => {
@@ -452,7 +460,7 @@ export default function Home() {
               {renderTranscriptContent()}
               {hasContent && (
                 <div className="absolute top-4 right-4 flex gap-1">
-                  <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
+                  <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} apiKey={settings.openaiApiKey || undefined} />
                   <button
                     onClick={() => copyToClipboard(transcript, "Transcript")}
                     className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
@@ -516,7 +524,7 @@ export default function Home() {
             {renderTranscriptContent()}
             {hasContent && (
               <div className="absolute top-4 right-4 flex gap-1">
-                <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} />
+                <SummaryDialog transcript={transcript} language={settings.language} customPrompt={settings.summaryPrompt} apiKey={settings.openaiApiKey || undefined} />
                 <button
                   onClick={() => copyToClipboard(transcript, "Transcript")}
                   className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"

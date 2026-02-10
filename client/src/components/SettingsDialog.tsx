@@ -17,7 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Settings, Eye, EyeOff } from "lucide-react";
 
 export type TranscriptionSettings = {
   chunkDuration: number;
@@ -31,6 +32,7 @@ export type TranscriptionSettings = {
   diarizeEnabled: boolean;
   translatorEnabled: boolean;
   translatorLanguage: string;
+  openaiApiKey: string;
 };
 
 export const DEFAULT_SUMMARY_PROMPT = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   diarizeEnabled: false,
   translatorEnabled: false,
   translatorLanguage: "en",
+  openaiApiKey: "",
 };
 
 const LANGUAGES = [
@@ -106,6 +109,7 @@ type Props = {
 
 export function SettingsDialog({ settings, onChange, disabled }: Props) {
   const [open, setOpen] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const update = (partial: Partial<TranscriptionSettings>) => {
     const next = { ...settings, ...partial };
@@ -134,8 +138,40 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 py-2">
+        <div className="space-y-6 py-2 max-h-[70vh] overflow-y-auto pr-1">
           <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>OpenAI API Key</Label>
+              <p className="text-xs text-muted-foreground">
+                Your key is stored only in this browser and sent directly with each request. It is never saved on the server.
+              </p>
+            </div>
+            <div className="relative">
+              <Input
+                type={showApiKey ? "text" : "password"}
+                value={settings.openaiApiKey}
+                onChange={(e) => update({ openaiApiKey: e.target.value })}
+                placeholder="sk-..."
+                className="pr-10 font-mono text-sm"
+                data-testid="input-api-key"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="button-toggle-api-key"
+              >
+                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {!settings.openaiApiKey && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                No API key set. The app will use the server's default key if available.
+              </p>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <Label>Chunk duration</Label>
               <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-chunk-value">

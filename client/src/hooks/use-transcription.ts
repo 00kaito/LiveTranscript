@@ -5,6 +5,7 @@ type TranscribeInput = {
   prompt?: string;
   language?: string;
   temperature?: number;
+  apiKey?: string;
 };
 
 type TranscribeResult = {
@@ -21,6 +22,7 @@ export type DiarizedSegment = {
 type DiarizeInput = {
   audioBlob: Blob;
   language?: string;
+  apiKey?: string;
 };
 
 type DiarizeResult = {
@@ -30,7 +32,7 @@ type DiarizeResult = {
 
 export function useTranscribeChunk() {
   return useMutation({
-    mutationFn: async ({ audioBlob, prompt, language, temperature }: TranscribeInput): Promise<TranscribeResult> => {
+    mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey }: TranscribeInput): Promise<TranscribeResult> => {
       const formData = new FormData();
       formData.append("file", audioBlob, "chunk.wav");
       
@@ -44,8 +46,14 @@ export function useTranscribeChunk() {
         formData.append("temperature", String(temperature));
       }
 
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers["X-OpenAI-Key"] = apiKey;
+      }
+
       const res = await fetch("/api/transcribe", {
         method: "POST",
+        headers,
         body: formData,
       });
 
@@ -75,7 +83,7 @@ export class DiarizeModelError extends Error {
 
 export function useDiarizeChunk() {
   return useMutation({
-    mutationFn: async ({ audioBlob, language }: DiarizeInput): Promise<DiarizeResult> => {
+    mutationFn: async ({ audioBlob, language, apiKey }: DiarizeInput): Promise<DiarizeResult> => {
       const formData = new FormData();
       formData.append("file", audioBlob, "chunk.wav");
 
@@ -83,8 +91,14 @@ export function useDiarizeChunk() {
         formData.append("language", language);
       }
 
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers["X-OpenAI-Key"] = apiKey;
+      }
+
       const res = await fetch("/api/transcribe-diarize", {
         method: "POST",
+        headers,
         body: formData,
       });
 

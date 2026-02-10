@@ -14,9 +14,10 @@ type Props = {
   transcript: string;
   language: string;
   customPrompt?: string;
+  apiKey?: string;
 };
 
-export function SummaryDialog({ transcript, language, customPrompt }: Props) {
+export function SummaryDialog({ transcript, language, customPrompt, apiKey }: Props) {
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,9 +29,12 @@ export function SummaryDialog({ transcript, language, customPrompt }: Props) {
     setError(null);
     setSummary("");
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+
       const res = await fetch("/api/summarize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ text: transcript, language, customPrompt: customPrompt || undefined }),
       });
       if (!res.ok) {

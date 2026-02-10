@@ -4,9 +4,17 @@ import multer from "multer";
 import fs from "fs";
 import OpenAI, { toFile } from "openai";
 
-const openai = new OpenAI({
+const defaultOpenai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY || "dummy-key",
 });
+
+function getOpenAI(req: { headers: Record<string, any> }): OpenAI {
+  const userKey = req.headers["x-openai-key"];
+  if (userKey && typeof userKey === "string" && userKey.trim()) {
+    return new OpenAI({ apiKey: userKey.trim() });
+  }
+  return defaultOpenai;
+}
 
 const upload = multer({ dest: "uploads/" });
 
@@ -44,6 +52,7 @@ export async function registerRoutes(
         transcribeParams.language = language;
       }
 
+      const openai = getOpenAI(req);
       const response = await openai.audio.transcriptions.create(transcribeParams);
 
       console.log(`[Transcribe] Result: "${response.text}"`);
@@ -84,6 +93,7 @@ export async function registerRoutes(
         transcribeParams.language = language;
       }
 
+      const openai = getOpenAI(req);
       const response: any = await openai.audio.transcriptions.create(transcribeParams);
 
       type DiarizedSegment = { speaker: string; text: string; start: number; end: number };
@@ -143,6 +153,7 @@ export async function registerRoutes(
 
       const langHint = language && language !== "auto" ? ` The text is in ${language} language.` : "";
 
+      const openai = getOpenAI(req);
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -184,6 +195,7 @@ export async function registerRoutes(
         ? ` The source text is in ${sourceLanguage}.`
         : "";
 
+      const openai = getOpenAI(req);
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -239,6 +251,7 @@ If a section has no relevant content, write "None identified." Keep the language
         ? customPrompt.trim() + langHint
         : defaultPrompt + langHint;
 
+      const openai = getOpenAI(req);
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
