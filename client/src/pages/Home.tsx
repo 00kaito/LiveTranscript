@@ -14,13 +14,11 @@ export default function Home() {
   const [transcript, setTranscript] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const transcriptRef = useRef(""); // Ref to keep track of latest state in callbacks
+  const transcriptRef = useRef(""); 
   
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
 
-  // Update ref when state changes
   useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
@@ -30,44 +28,60 @@ export default function Home() {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setStream(audioStream);
 
-      const mediaRecorder = new MediaRecorder(audioStream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = []; // Reset chunks
+      // We need to restart the recorder for every chunk to get a valid header
+      // Using mediaRecorder.start(CHUNK_DURATION_MS) causes issues because 
+      // subsequent blobs are just raw data without the container header (WebM/OGG)
+      // Whisper needs the header to decode.
+      
+      const createRecorder = () => {
+        const recorder = new MediaRecorder(audioStream, {
+          mimeType: 'audio/webm;codecs=opus'
+        });
 
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          // Process this chunk immediately
-          const chunkBlob = event.data;
-          
-          // Get the last 200 chars of context
-          const currentText = transcriptRef.current;
-          const prompt = currentText.slice(-200);
+        recorder.ondataavailable = async (event) => {
+          if (event.data.size > 0 && isRecording) {
+            const chunkBlob = event.data;
+            const prompt = transcriptRef.current.slice(-200);
 
-          try {
-            const result = await transcribeMutation.mutateAsync({
-              audioBlob: chunkBlob,
-              prompt
-            });
-
-            if (result.text) {
-              setTranscript(prev => {
-                // Heuristic: If new text doesn't start with space and prev doesn't end with space, add one
-                const needsSpace = prev.length > 0 && !prev.endsWith(' ') && !result.text.startsWith(' ');
-                return prev + (needsSpace ? " " : "") + result.text;
+            try {
+              const result = await transcribeMutation.mutateAsync({
+                audioBlob: chunkBlob,
+                prompt
               });
+
+              if (result.text) {
+                setTranscript(prev => {
+                  const needsSpace = prev.length > 0 && !prev.endsWith(' ') && !result.text.startsWith(' ');
+                  return prev + (needsSpace ? " " : "") + result.text;
+                });
+              }
+            } catch (error) {
+              console.error("Transcription error", error);
             }
-          } catch (error) {
-            console.error("Transcription error", error);
-            // Optional: show non-intrusive error indicator
           }
-        }
+        };
+
+        return recorder;
       };
 
-      // Start recording with timeslice to get periodic data
-      mediaRecorder.start(CHUNK_DURATION_MS);
+      const processNextChunk = () => {
+        if (!audioStream.active) return;
+        
+        const recorder = createRecorder();
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+
+        setTimeout(() => {
+          if (recorder.state === "recording") {
+            recorder.stop();
+            // Start next chunk immediately
+            processNextChunk();
+          }
+        }, CHUNK_DURATION_MS);
+      };
+
       setIsRecording(true);
+      processNextChunk();
       
       toast({
         title: "Microphone Active",
@@ -85,15 +99,15 @@ export default function Home() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    setIsRecording(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      setIsRecording(false);
-      setStream(null);
-      mediaRecorderRef.current = null;
     }
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setStream(null);
+    mediaRecorderRef.current = null;
   };
 
   const clearTranscript = () => {
@@ -110,7 +124,6 @@ export default function Home() {
     });
   };
 
-  // Auto-scroll to bottom
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
