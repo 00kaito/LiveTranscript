@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Settings, Eye, EyeOff } from "lucide-react";
 
 export type TranscriptionSettings = {
+  transcribeModel: string;
   chunkDuration: number;
   language: string;
   contextLength: number;
@@ -52,6 +53,7 @@ A bullet list of specific tasks, assignments, or next steps to be taken. Include
 If a section has no relevant content, write "None identified." Keep the language professional and clear.`;
 
 export const DEFAULT_SETTINGS: TranscriptionSettings = {
+  transcribeModel: "gpt-4o-mini-transcribe",
   chunkDuration: 3,
   language: "pl",
   contextLength: 200,
@@ -208,6 +210,25 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-3">
+            <Label>Transcription model</Label>
+            <Select
+              value={settings.transcribeModel}
+              onValueChange={(v) => update({ transcribeModel: v })}
+            >
+              <SelectTrigger className="bg-background" data-testid="select-transcribe-model">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="gpt-4o-mini-transcribe" data-testid="option-model-mini">gpt-4o-mini-transcribe</SelectItem>
+                <SelectItem value="gpt-4o-transcribe" data-testid="option-model-full">gpt-4o-transcribe</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Mini is faster and cheaper. Full model is more accurate, especially for complex audio.
+            </p>
           </div>
 
           <div className="space-y-3">

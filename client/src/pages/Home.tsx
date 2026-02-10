@@ -234,6 +234,7 @@ export default function Home() {
           language: s.language,
           temperature: s.temperature,
           apiKey: s.openaiApiKey || undefined,
+          model: s.transcribeModel,
         });
         if (result.text && result.text.trim()) {
           setTranscript((prev) => {

@@ -41,9 +41,10 @@ export async function registerRoutes(
       const buffer = await fs.promises.readFile(tempFilePath);
       const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
 
+      const model = req.body.model || "gpt-4o-mini-transcribe";
       const transcribeParams: any = {
         file: file,
-        model: "gpt-4o-mini-transcribe",
+        model: model,
         prompt: prompt,
         temperature: temperature,
       };

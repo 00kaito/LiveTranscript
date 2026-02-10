@@ -6,6 +6,7 @@ type TranscribeInput = {
   language?: string;
   temperature?: number;
   apiKey?: string;
+  model?: string;
 };
 
 type TranscribeResult = {
@@ -32,7 +33,7 @@ type DiarizeResult = {
 
 export function useTranscribeChunk() {
   return useMutation({
-    mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey }: TranscribeInput): Promise<TranscribeResult> => {
+    mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey, model }: TranscribeInput): Promise<TranscribeResult> => {
       const formData = new FormData();
       formData.append("file", audioBlob, "chunk.wav");
       
@@ -44,6 +45,9 @@ export function useTranscribeChunk() {
       }
       if (temperature !== undefined) {
         formData.append("temperature", String(temperature));
+      }
+      if (model) {
+        formData.append("model", model);
       }
 
       const headers: Record<string, string> = {};
