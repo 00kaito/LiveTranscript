@@ -161,8 +161,11 @@ export class ChunkedAudioRecorder {
 
 export class FullRecorder {
   private stream: MediaStream | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
-  private recordedChunks: Blob[] = [];
+  private audioContext: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private pcmBuffers: Float32Array[] = [];
+  private pcmSampleCount = 0;
   private isActive = false;
   private onSegment: AudioRecorderCallback;
   private onSilenceChange: SilenceCallback | null;
@@ -170,11 +173,10 @@ export class FullRecorder {
   private segmentDurationMs: number;
   private segmentIntervalId: number | null = null;
   private startTime = 0;
-
-  private analyserNode: AnalyserNode | null = null;
-  private audioContext: AudioContext | null = null;
-  private silenceCheckId: number | null = null;
   private lastSilentState: boolean | null = null;
+  private sampleRate = SAMPLE_RATE;
+  private useWorklet = false;
+  private processor: ScriptProcessorNode | null = null;
 
   constructor(
     onSegment: AudioRecorderCallback,
@@ -189,90 +191,107 @@ export class FullRecorder {
   }
 
   async start() {
+    this.pcmBuffers = [];
+    this.pcmSampleCount = 0;
+
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
+        sampleRate: SAMPLE_RATE,
+        channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
       },
     });
 
-    this.audioContext = new AudioContext();
-    const source = this.audioContext.createMediaStreamSource(this.stream);
-    this.analyserNode = this.audioContext.createAnalyser();
-    this.analyserNode.fftSize = 2048;
-    source.connect(this.analyserNode);
+    this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    this.sampleRate = this.audioContext.sampleRate;
+    this.source = this.audioContext.createMediaStreamSource(this.stream);
 
-    this.silenceCheckId = window.setInterval(() => {
-      this.checkSilence();
-    }, 250);
+    try {
+      const workletCode = `
+        class PCMCapture extends AudioWorkletProcessor {
+          process(inputs) {
+            const input = inputs[0];
+            if (input && input[0] && input[0].length > 0) {
+              this.port.postMessage(new Float32Array(input[0]));
+            }
+            return true;
+          }
+        }
+        registerProcessor('pcm-capture', PCMCapture);
+      `;
+      const blob = new Blob([workletCode], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      await this.audioContext.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
 
-    this.startMediaRecorder();
+      this.workletNode = new AudioWorkletNode(this.audioContext, "pcm-capture");
+      this.workletNode.port.onmessage = (e: MessageEvent) => {
+        if (!this.isActive) return;
+        const samples = e.data as Float32Array;
+        this.pcmBuffers.push(samples);
+        this.pcmSampleCount += samples.length;
+        this.detectSilence(samples);
+      };
+      this.source.connect(this.workletNode);
+      this.workletNode.connect(this.audioContext.destination);
+      this.useWorklet = true;
+      console.log("[FullRecorder] Using AudioWorklet for capture");
+    } catch {
+      console.log("[FullRecorder] AudioWorklet not available, using ScriptProcessor fallback");
+      this.useWorklet = false;
+      const bufferSize = 4096;
+      this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+      this.processor.onaudioprocess = (e) => {
+        if (!this.isActive) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(inputData);
+        this.pcmBuffers.push(copy);
+        this.pcmSampleCount += copy.length;
+        this.detectSilence(copy);
+      };
+      this.source.connect(this.processor);
+      this.processor.connect(this.audioContext.destination);
+    }
+
     this.isActive = true;
     this.startTime = Date.now();
 
     this.segmentIntervalId = window.setInterval(() => {
-      this.cycleRecorder();
+      this.flushSegment();
     }, this.segmentDurationMs);
   }
 
-  private startMediaRecorder() {
-    if (!this.stream) return;
-
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : MediaRecorder.isTypeSupported("audio/webm")
-      ? "audio/webm"
-      : "";
-
-    this.recordedChunks = [];
-    this.mediaRecorder = new MediaRecorder(this.stream, {
-      ...(mimeType ? { mimeType } : {}),
-    });
-
-    this.mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this.recordedChunks.push(e.data);
-      }
-    };
-
-    this.mediaRecorder.start(1000);
-  }
-
-  private cycleRecorder() {
-    if (!this.isActive || !this.mediaRecorder) return;
-
-    const currentRecorder = this.mediaRecorder;
-    const currentChunks = this.recordedChunks;
-
-    currentRecorder.onstop = () => {
-      if (currentChunks.length > 0) {
-        const blob = new Blob(currentChunks, { type: currentRecorder.mimeType || "audio/webm" });
-        console.log(`[FullRecorder] Segment ready: ${(blob.size / 1024).toFixed(0)} KB, type=${blob.type}`);
-        this.onSegment(blob);
-      }
-    };
-
-    currentRecorder.stop();
-
-    this.startMediaRecorder();
-  }
-
-  private checkSilence() {
-    if (!this.analyserNode) return;
-    const data = new Float32Array(this.analyserNode.fftSize);
-    this.analyserNode.getFloatTimeDomainData(data);
-
+  private detectSilence(samples: Float32Array) {
     let sumSquares = 0;
-    for (let i = 0; i < data.length; i++) {
-      sumSquares += data[i] * data[i];
+    for (let i = 0; i < samples.length; i++) {
+      sumSquares += samples[i] * samples[i];
     }
-    const rms = Math.sqrt(sumSquares / data.length);
+    const rms = Math.sqrt(sumSquares / samples.length);
     const isSilent = rms < this.silenceThreshold;
 
     if (this.onSilenceChange && this.lastSilentState !== isSilent) {
       this.lastSilentState = isSilent;
       this.onSilenceChange(isSilent);
     }
+  }
+
+  private flushSegment() {
+    if (this.pcmBuffers.length === 0) return;
+
+    const totalLength = this.pcmBuffers.reduce((acc, c) => acc + c.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const buf of this.pcmBuffers) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    }
+    this.pcmBuffers = [];
+
+    const durationSec = (totalLength / this.sampleRate).toFixed(1);
+    const wavBlob = encodeWav(merged, this.sampleRate);
+    console.log(`[FullRecorder] Segment: ${durationSec}s, ${totalLength} samples, WAV ${(wavBlob.size / 1024).toFixed(0)} KB`);
+    this.onSegment(wavBlob);
   }
 
   stop() {
@@ -282,29 +301,20 @@ export class FullRecorder {
       clearInterval(this.segmentIntervalId);
       this.segmentIntervalId = null;
     }
-    if (this.silenceCheckId !== null) {
-      clearInterval(this.silenceCheckId);
-      this.silenceCheckId = null;
+
+    this.flushSegment();
+
+    if (this.workletNode) {
+      this.workletNode.disconnect();
+      this.workletNode = null;
     }
-
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      const finalChunks = this.recordedChunks;
-      const finalRecorder = this.mediaRecorder;
-
-      finalRecorder.onstop = () => {
-        if (finalChunks.length > 0) {
-          const blob = new Blob(finalChunks, { type: finalRecorder.mimeType || "audio/webm" });
-          console.log(`[FullRecorder] Final segment: ${(blob.size / 1024).toFixed(0)} KB, type=${blob.type}`);
-          this.onSegment(blob);
-        }
-      };
-
-      finalRecorder.stop();
+    if (this.processor) {
+      this.processor.disconnect();
+      this.processor = null;
     }
-
-    if (this.analyserNode) {
-      this.analyserNode.disconnect();
-      this.analyserNode = null;
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
     }
     if (this.audioContext) {
       this.audioContext.close();
