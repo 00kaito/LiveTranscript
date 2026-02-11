@@ -295,50 +295,62 @@ export default function Home() {
     };
   });
 
-  const processFullRecording = useCallback(async (wavBlob: Blob) => {
+  const processFullRecording = useCallback(async (wavBlobs: Blob[]) => {
     const s = settingsRef.current;
     setIsProcessing(true);
     setError(null);
 
     try {
-      if (s.diarizeEnabled) {
-        const result = await diarizeMutation.mutateAsync({
-          audioBlob: wavBlob,
-          language: s.language,
-          apiKey: s.openaiApiKey || undefined,
-        });
+      let contextPrompt = "";
 
-        if (result.segments && result.segments.length > 0) {
-          setDiarizedSegments(result.segments.filter((seg) => seg.text.trim()));
-          const plainText = result.segments
-            .filter((seg) => seg.text.trim())
-            .map((seg) => `${seg.speaker}: ${seg.text}`)
-            .join("\n");
-          setTranscript(plainText);
-        }
-      } else {
-        const result = await transcribeMutation.mutateAsync({
-          audioBlob: wavBlob,
-          prompt: "",
-          language: s.language,
-          temperature: s.temperature,
-          apiKey: s.openaiApiKey || undefined,
-          model: s.transcribeModel,
-        });
+      for (let i = 0; i < wavBlobs.length; i++) {
+        const blob = wavBlobs[i];
 
-        if (result.text && result.text.trim()) {
-          const newText = result.text.trim();
-          setTranscript((prev) => {
-            if (prev.length === 0) return newText;
-            const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
-            return prev + (needsSpace ? " " : "") + newText;
+        if (s.diarizeEnabled) {
+          const result = await diarizeMutation.mutateAsync({
+            audioBlob: blob,
+            language: s.language,
+            apiKey: s.openaiApiKey || undefined,
           });
+
+          if (result.segments && result.segments.length > 0) {
+            const newSegs = result.segments.filter((seg) => seg.text.trim());
+            setDiarizedSegments((prev) => [...prev, ...newSegs]);
+            const plainText = newSegs
+              .map((seg) => `${seg.speaker}: ${seg.text}`)
+              .join("\n");
+            setTranscript((prev) => {
+              if (prev.length === 0) return plainText;
+              return prev + "\n" + plainText;
+            });
+          }
+        } else {
+          const result = await transcribeMutation.mutateAsync({
+            audioBlob: blob,
+            prompt: contextPrompt,
+            language: s.language,
+            temperature: s.temperature,
+            apiKey: s.openaiApiKey || undefined,
+            model: s.transcribeModel,
+          });
+
+          if (result.text && result.text.trim()) {
+            const newText = result.text.trim();
+            contextPrompt = newText.slice(-s.contextLength);
+            setTranscript((prev) => {
+              if (prev.length === 0) return newText;
+              const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
+              return prev + (needsSpace ? " " : "") + newText;
+            });
+          }
         }
       }
 
       toast({
         title: "Transcription Complete",
-        description: "Your recording has been transcribed.",
+        description: wavBlobs.length > 1
+          ? `Recording transcribed in ${wavBlobs.length} segments.`
+          : "Your recording has been transcribed.",
       });
 
       if (s.clarifyEnabled) {
@@ -418,14 +430,14 @@ export default function Home() {
     }
 
     if (fullRecorderRef.current) {
-      const wavBlob = fullRecorderRef.current.stop();
+      const wavBlobs = fullRecorderRef.current.stop();
       fullRecorderRef.current = null;
       setIsRecording(false);
       setIsSilent(true);
       setRecordingDuration(0);
 
-      if (wavBlob) {
-        processFullRecording(wavBlob);
+      if (wavBlobs.length > 0) {
+        processFullRecording(wavBlobs);
       } else {
         toast({
           title: "No Audio",

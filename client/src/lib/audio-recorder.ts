@@ -219,7 +219,7 @@ export class FullRecorder {
     this.isActive = true;
   }
 
-  stop(): Blob | null {
+  stop(): Blob[] {
     this.isActive = false;
 
     if (this.processor) {
@@ -242,7 +242,7 @@ export class FullRecorder {
       this.stream = null;
     }
 
-    if (this.chunks.length === 0) return null;
+    if (this.chunks.length === 0) return [];
 
     const totalLength = this.chunks.reduce((acc, c) => acc + c.length, 0);
     const merged = new Float32Array(totalLength);
@@ -253,7 +253,16 @@ export class FullRecorder {
     }
     this.chunks = [];
 
-    return encodeWav(merged, sampleRate);
+    const maxSamplesPerSegment = sampleRate * 60;
+    const blobs: Blob[] = [];
+
+    for (let i = 0; i < merged.length; i += maxSamplesPerSegment) {
+      const end = Math.min(i + maxSamplesPerSegment, merged.length);
+      const segment = merged.subarray(i, end);
+      blobs.push(encodeWav(segment, sampleRate));
+    }
+
+    return blobs;
   }
 
   getStream(): MediaStream | null {
