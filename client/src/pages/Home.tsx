@@ -222,6 +222,7 @@ export default function Home() {
 
     async function handleTranscribeSegment(blob: Blob, s: TranscriptionSettings, isRecordMode: boolean) {
       const prompt = transcriptRef.current.slice(-s.contextLength);
+      console.log(`[Transcribe] Sending chunk: ${blob.size} bytes, mode=${isRecordMode ? "record" : "live"}`);
       const result = await transcribeMutation.mutateAsync({
         audioBlob: blob,
         prompt,
@@ -231,8 +232,12 @@ export default function Home() {
         model: s.transcribeModel,
       });
 
-      if (!result.text || !result.text.trim()) return;
+      if (!result.text || !result.text.trim()) {
+        console.log("[Transcribe] Empty result, skipping");
+        return;
+      }
       const newText = result.text.trim();
+      console.log(`[Transcribe] Got result: "${newText}"`);
 
       setTranscript((prev) => {
         if (prev.length === 0) return newText;
@@ -242,7 +247,10 @@ export default function Home() {
           const tailLower = tail.toLowerCase();
           const incomingLower = newText.toLowerCase();
 
-          if (tailLower.includes(incomingLower)) return prev;
+          if (tailLower.includes(incomingLower)) {
+            console.log("[Dedup] Exact substring match, skipping");
+            return prev;
+          }
 
           const incomingWords = incomingLower.split(/\s+/).filter(Boolean);
           if (incomingWords.length >= 3) {
@@ -255,7 +263,10 @@ export default function Home() {
             for (const ng of ngrams) {
               if (tailLower.includes(ng)) matched++;
             }
-            if (ngrams.length > 0 && matched / ngrams.length > 0.5) return prev;
+            if (ngrams.length > 0 && matched / ngrams.length > 0.5) {
+              console.log(`[Dedup] N-gram match ${matched}/${ngrams.length}, skipping`);
+              return prev;
+            }
           }
 
           let bestOverlap = 0;
@@ -268,7 +279,14 @@ export default function Home() {
           }
 
           const unique = bestOverlap > 0 ? newText.slice(bestOverlap).trim() : newText;
-          if (!unique) return prev;
+          if (!unique) {
+            console.log("[Dedup] Full overlap, skipping");
+            return prev;
+          }
+
+          if (bestOverlap > 0) {
+            console.log(`[Dedup] Overlap ${bestOverlap} chars, appending unique: "${unique.slice(0, 50)}"`);
+          }
 
           const needsSpace = !prev.endsWith(" ") && !unique.startsWith(" ");
           return prev + (needsSpace ? " " : "") + unique;
