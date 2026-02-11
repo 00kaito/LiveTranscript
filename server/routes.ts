@@ -16,6 +16,32 @@ function getOpenAI(req: { headers: Record<string, any> }): OpenAI {
   return defaultOpenai;
 }
 
+async function readUploadedAudio(file: Express.Multer.File) {
+  const buffer = await fs.promises.readFile(file.path);
+  const name = file.originalname || "audio.wav";
+  const mime = file.mimetype || "audio/wav";
+  const ext = name.includes(".") ? name.split(".").pop() : (mime.includes("webm") ? "webm" : "wav");
+  const type = mime.startsWith("audio/") ? mime : "audio/wav";
+  return toFile(buffer, `audio.${ext}`, { type });
+}
+
+function cleanupTempFile(path?: string) {
+  if (path) fs.unlink(path, () => {});
+}
+
+async function chatCompletion(openai: OpenAI, systemPrompt: string, userText: string, options?: { temperature?: number; max_tokens?: number }) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userText },
+    ],
+    temperature: options?.temperature ?? 0.3,
+    ...(options?.max_tokens ? { max_tokens: options.max_tokens } : {}),
+  });
+  return response.choices[0]?.message?.content?.trim() || "";
+}
+
 const upload = multer({ dest: "uploads/" });
 
 export async function registerRoutes(
@@ -24,83 +50,54 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.post("/api/transcribe", upload.single("file"), async (req, res) => {
-    let tempFilePath: string | undefined;
+    const tempFilePath = req.file?.path;
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      tempFilePath = req.file.path;
       const prompt = req.body.prompt || "";
       const language = req.body.language || "pl";
-      const temperature = req.body.temperature !== undefined
-        ? parseFloat(req.body.temperature)
-        : 0;
+      const temperature = req.body.temperature !== undefined ? parseFloat(req.body.temperature) : 0;
+      const model = req.body.model || "gpt-4o-mini-transcribe";
+
       console.log(`[Transcribe] Chunk received: ${req.file.size} bytes, lang=${language}, temp=${temperature}`);
 
-      const buffer = await fs.promises.readFile(tempFilePath);
-      const origName = req.file.originalname || "audio.wav";
-      const origMime = req.file.mimetype || "audio/wav";
-      const ext = origName.includes(".") ? origName.split(".").pop() : (origMime.includes("webm") ? "webm" : "wav");
-      const fileName = `audio.${ext}`;
-      const fileType = origMime.startsWith("audio/") ? origMime : "audio/wav";
-      const file = await toFile(buffer, fileName, { type: fileType });
-
-      const model = req.body.model || "gpt-4o-mini-transcribe";
-      const transcribeParams: any = {
-        file: file,
-        model: model,
-        prompt: prompt,
-        temperature: temperature,
-      };
-
-      if (language !== "auto") {
-        transcribeParams.language = language;
-      }
+      const file = await readUploadedAudio(req.file);
+      const transcribeParams: any = { file, model, prompt, temperature };
+      if (language !== "auto") transcribeParams.language = language;
 
       const openai = getOpenAI(req);
       const response = await openai.audio.transcriptions.create(transcribeParams);
 
       console.log(`[Transcribe] Result: "${response.text}"`);
       res.json({ text: response.text });
-
     } catch (error: any) {
       console.error("[Transcribe] Error:", error.message || error);
       res.status(500).json({ message: error.message || "Transcription failed" });
     } finally {
-      if (tempFilePath) {
-        fs.unlink(tempFilePath, () => {});
-      }
+      cleanupTempFile(tempFilePath);
     }
   });
 
   app.post("/api/transcribe-diarize", upload.single("file"), async (req, res) => {
-    let tempFilePath: string | undefined;
+    const tempFilePath = req.file?.path;
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      tempFilePath = req.file.path;
       const language = req.body.language || "pl";
       console.log(`[Diarize] Chunk received: ${req.file.size} bytes, lang=${language}`);
 
-      const buffer = await fs.promises.readFile(tempFilePath);
-      const dOrigName = req.file.originalname || "audio.wav";
-      const dOrigMime = req.file.mimetype || "audio/wav";
-      const dExt = dOrigName.includes(".") ? dOrigName.split(".").pop() : (dOrigMime.includes("webm") ? "webm" : "wav");
-      const file = await toFile(buffer, `audio.${dExt}`, { type: dOrigMime.startsWith("audio/") ? dOrigMime : "audio/wav" });
-
+      const file = await readUploadedAudio(req.file);
       const transcribeParams: any = {
-        file: file,
+        file,
         model: "gpt-4o-transcribe-diarize",
         response_format: "diarized_json",
         chunking_strategy: "auto",
       };
-
-      if (language !== "auto") {
-        transcribeParams.language = language;
-      }
+      if (language !== "auto") transcribeParams.language = language;
 
       const openai = getOpenAI(req);
       const response: any = await openai.audio.transcriptions.create(transcribeParams);
@@ -108,8 +105,7 @@ export async function registerRoutes(
       type DiarizedSegment = { speaker: string; text: string; start: number; end: number };
       const diarizedSegments: DiarizedSegment[] = [];
 
-      const segments = response.segments || [];
-      for (const seg of segments) {
+      for (const seg of response.segments || []) {
         const text = (seg.text || "").trim();
         if (text) {
           diarizedSegments.push({
@@ -122,18 +118,12 @@ export async function registerRoutes(
       }
 
       if (diarizedSegments.length === 0 && response.text) {
-        diarizedSegments.push({
-          speaker: "A",
-          text: response.text.trim(),
-          start: 0,
-          end: 0,
-        });
+        diarizedSegments.push({ speaker: "A", text: response.text.trim(), start: 0, end: 0 });
       }
 
       const plainText = diarizedSegments.map((s) => s.text).join(" ");
       console.log(`[Diarize] Result: ${diarizedSegments.length} segments, text: "${plainText.slice(0, 100)}..."`);
       res.json({ segments: diarizedSegments, text: plainText });
-
     } catch (error: any) {
       console.error("[Diarize] Error:", error.message || error);
       const msg = error.message || "Diarized transcription failed";
@@ -146,42 +136,25 @@ export async function registerRoutes(
         res.status(500).json({ message: msg });
       }
     } finally {
-      if (tempFilePath) {
-        fs.unlink(tempFilePath, () => {});
-      }
+      cleanupTempFile(tempFilePath);
     }
   });
 
   app.post("/api/clarify", async (req, res) => {
     try {
       const { text, language } = req.body;
-
       if (!text || typeof text !== "string") {
         return res.status(400).json({ message: "No text provided" });
       }
 
       const langHint = language && language !== "auto" ? ` The text is in ${language} language.` : "";
+      const systemPrompt = `You are a text editor that fixes grammar, punctuation, and logical errors in transcribed speech. Keep the original meaning and language intact. Do not add new information or change the intent. Only fix grammar, spelling, punctuation, and sentence structure to make the text more readable.${langHint} Return only the corrected text without any explanation or extra commentary.`;
 
       const openai = getOpenAI(req);
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a text editor that fixes grammar, punctuation, and logical errors in transcribed speech. Keep the original meaning and language intact. Do not add new information or change the intent. Only fix grammar, spelling, punctuation, and sentence structure to make the text more readable.${langHint} Return only the corrected text without any explanation or extra commentary.`,
-          },
-          {
-            role: "user",
-            content: text,
-          },
-        ],
-        temperature: 0.3,
-      });
+      const clarified = await chatCompletion(openai, systemPrompt, text) || text;
 
-      const clarified = response.choices[0]?.message?.content?.trim() || text;
       console.log(`[Clarify] Input: "${text.slice(0, 100)}..." -> Output: "${clarified.slice(0, 100)}..."`);
       res.json({ text: clarified });
-
     } catch (error: any) {
       console.error("[Clarify] Error:", error.message || error);
       res.status(500).json({ message: error.message || "Clarification failed" });
@@ -191,39 +164,21 @@ export async function registerRoutes(
   app.post("/api/translate", async (req, res) => {
     try {
       const { text, targetLanguage, sourceLanguage } = req.body;
-
       if (!text || typeof text !== "string") {
         return res.status(400).json({ message: "No text provided" });
       }
-
       if (!targetLanguage || typeof targetLanguage !== "string") {
         return res.status(400).json({ message: "No target language provided" });
       }
 
-      const sourceLangHint = sourceLanguage && sourceLanguage !== "auto"
-        ? ` The source text is in ${sourceLanguage}.`
-        : "";
+      const sourceLangHint = sourceLanguage && sourceLanguage !== "auto" ? ` The source text is in ${sourceLanguage}.` : "";
+      const systemPrompt = `You are a professional translator. Translate the following text to ${targetLanguage}.${sourceLangHint} Preserve the original meaning, tone, and formatting. Return only the translated text without any explanation, commentary, or notes.`;
 
       const openai = getOpenAI(req);
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional translator. Translate the following text to ${targetLanguage}.${sourceLangHint} Preserve the original meaning, tone, and formatting. Return only the translated text without any explanation, commentary, or notes.`,
-          },
-          {
-            role: "user",
-            content: text,
-          },
-        ],
-        temperature: 0.3,
-      });
+      const translated = await chatCompletion(openai, systemPrompt, text) || text;
 
-      const translated = response.choices[0]?.message?.content?.trim() || text;
       console.log(`[Translate] "${text.slice(0, 60)}..." -> "${translated.slice(0, 60)}..." (to ${targetLanguage})`);
       res.json({ text: translated });
-
     } catch (error: any) {
       console.error("[Translate] Error:", error.message || error);
       res.status(500).json({ message: error.message || "Translation failed" });
@@ -233,13 +188,11 @@ export async function registerRoutes(
   app.post("/api/summarize", async (req, res) => {
     try {
       const { text, language, customPrompt } = req.body;
-
       if (!text || typeof text !== "string" || text.trim().length < 20) {
         return res.status(400).json({ message: "Not enough transcript text to summarize" });
       }
 
       const langHint = language && language !== "auto" ? ` Respond in ${language} language.` : "";
-
       const defaultPrompt = `You are a professional meeting assistant. Analyze the provided meeting transcript and generate a structured report in markdown format. The report must contain the following sections:
 
 ## Summary
@@ -261,26 +214,10 @@ If a section has no relevant content, write "None identified." Keep the language
         : defaultPrompt + langHint;
 
       const openai = getOpenAI(req);
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: text,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      });
+      const summary = await chatCompletion(openai, systemPrompt, text, { max_tokens: 2000 });
 
-      const summary = response.choices[0]?.message?.content?.trim() || "";
       console.log(`[Summarize] Generated summary for ${text.length} chars of transcript`);
       res.json({ summary });
-
     } catch (error: any) {
       console.error("[Summarize] Error:", error.message || error);
       res.status(500).json({ message: error.message || "Summary generation failed" });

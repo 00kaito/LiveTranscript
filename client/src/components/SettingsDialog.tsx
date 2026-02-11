@@ -70,8 +70,7 @@ export const DEFAULT_SETTINGS: TranscriptionSettings = {
   openaiApiKey: "",
 };
 
-const LANGUAGES = [
-  { value: "auto", label: "Auto-detect" },
+const SUPPORTED_LANGUAGES = [
   { value: "pl", label: "Polski" },
   { value: "en", label: "English" },
   { value: "de", label: "Deutsch" },
@@ -88,22 +87,8 @@ const LANGUAGES = [
   { value: "ko", label: "Hangugeo" },
 ];
 
-const TRANSLATOR_LANGUAGES = [
-  { value: "en", label: "English" },
-  { value: "pl", label: "Polski" },
-  { value: "de", label: "Deutsch" },
-  { value: "fr", label: "Francais" },
-  { value: "es", label: "Espanol" },
-  { value: "it", label: "Italiano" },
-  { value: "pt", label: "Portugues" },
-  { value: "nl", label: "Nederlands" },
-  { value: "cs", label: "Cestina" },
-  { value: "uk", label: "Ukrainska" },
-  { value: "ru", label: "Russkij" },
-  { value: "ja", label: "Nihongo" },
-  { value: "zh", label: "Zhongwen" },
-  { value: "ko", label: "Hangugeo" },
-];
+const LANGUAGES = [{ value: "auto", label: "Auto-detect" }, ...SUPPORTED_LANGUAGES];
+const TRANSLATOR_LANGUAGES = SUPPORTED_LANGUAGES;
 
 type Props = {
   settings: TranscriptionSettings;
@@ -179,7 +164,7 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
             <div className="space-y-1">
               <Label>Recording mode</Label>
               <p className="text-xs text-muted-foreground">
-                Live: transcribes audio in real-time as you speak. Record: records everything first, then transcribes after you stop.
+                Live: transcribes audio in real-time chunks as you speak. Record: continuously records with automatic 60-second segment transcription.
               </p>
             </div>
             <Select

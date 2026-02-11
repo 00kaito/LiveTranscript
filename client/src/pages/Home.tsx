@@ -61,12 +61,11 @@ export default function Home() {
   const settingsRef = useRef(settings);
   const clarifiedUpToRef = useRef(0);
   const clarifyingRef = useRef(false);
-  const translatedUpToRef = useRef(0);
 
   const { toast } = useToast();
   const transcribeMutation = useTranscribeChunk();
   const diarizeMutation = useDiarizeChunk();
-  const handleChunkRef = useRef<(wavBlob: Blob) => void>(() => {});
+  const handleAudioSegmentRef = useRef<(blob: Blob, mode: "live" | "record") => void>(() => {});
 
   useEffect(() => {
     transcriptRef.current = transcript;
@@ -168,195 +167,142 @@ export default function Home() {
   }, [tryTranslate]);
 
   useEffect(() => {
-    handleChunkRef.current = async (wavBlob: Blob) => {
+    handleAudioSegmentRef.current = async (blob: Blob, mode: "live" | "record") => {
       const s = settingsRef.current;
+      const isRecordMode = mode === "record";
 
-      if (s.diarizeEnabled) {
-        try {
-          setError(null);
-          const result = await diarizeMutation.mutateAsync({
-            audioBlob: wavBlob,
-            language: s.language,
-            apiKey: s.openaiApiKey || undefined,
-          });
-
-          if (result.segments && result.segments.length > 0) {
-            setDiarizedSegments((prev) => {
-              const newSegs = result.segments.filter((seg) => seg.text.trim());
-              if (newSegs.length === 0) return prev;
-
-              if (prev.length > 0) {
-                const lastSeg = prev[prev.length - 1];
-                const firstNew = newSegs[0];
-                if (lastSeg.speaker === firstNew.speaker) {
-                  const merged = [...prev];
-                  merged[merged.length - 1] = {
-                    ...lastSeg,
-                    text: lastSeg.text + " " + firstNew.text,
-                    end: firstNew.end,
-                  };
-                  return [...merged, ...newSegs.slice(1)];
-                }
-              }
-
-              return [...prev, ...newSegs];
-            });
-
-            const plainText = result.segments
-              .filter((seg) => seg.text.trim())
-              .map((seg) => `${seg.speaker}: ${seg.text}`)
-              .join("\n");
-            setTranscript((prev) => {
-              if (prev.length === 0) return plainText;
-              return prev + "\n" + plainText;
-            });
-          }
-        } catch (err: any) {
-          console.error("Diarize chunk error:", err);
-          if (err instanceof DiarizeModelError) {
-            setError(err.message);
-            if (recorderRef.current) {
-              recorderRef.current.stop();
-              recorderRef.current = null;
-            }
-            setIsRecording(false);
-            setIsSilent(true);
-            setSettings((prev) => ({ ...prev, diarizeEnabled: false }));
-            return;
-          }
-          setError("Connection issue. Some audio may have been lost.");
-        }
-        return;
-      }
-
-      const prompt = transcriptRef.current.slice(-s.contextLength);
-      try {
-        setError(null);
-        const result = await transcribeMutation.mutateAsync({
-          audioBlob: wavBlob,
-          prompt,
-          language: s.language,
-          temperature: s.temperature,
-          apiKey: s.openaiApiKey || undefined,
-          model: s.transcribeModel,
-        });
-        if (result.text && result.text.trim()) {
-          setTranscript((prev) => {
-            const newText = result.text.trim();
-            if (prev.length === 0) return newText;
-
-            const tail = prev.slice(-500);
-            const tailLower = tail.toLowerCase();
-            const incomingLower = newText.toLowerCase();
-
-            if (tailLower.includes(incomingLower)) return prev;
-
-            const incomingWords = incomingLower.split(/\s+/).filter(Boolean);
-            if (incomingWords.length >= 3) {
-              const ngramSize = 3;
-              const ngrams: string[] = [];
-              for (let i = 0; i <= incomingWords.length - ngramSize; i++) {
-                ngrams.push(incomingWords.slice(i, i + ngramSize).join(" "));
-              }
-              let matched = 0;
-              for (const ng of ngrams) {
-                if (tailLower.includes(ng)) matched++;
-              }
-              if (ngrams.length > 0 && matched / ngrams.length > 0.5) return prev;
-            }
-
-            let bestOverlap = 0;
-            const maxCheck = Math.min(tail.length, newText.length);
-            for (let len = 5; len <= maxCheck; len++) {
-              const suffix = tailLower.slice(-len);
-              if (incomingLower.startsWith(suffix)) {
-                bestOverlap = len;
-              }
-            }
-
-            const unique = bestOverlap > 0 ? newText.slice(bestOverlap).trim() : newText;
-            if (!unique) return prev;
-
-            const needsSpace = !prev.endsWith(" ") && !unique.startsWith(" ");
-            return prev + (needsSpace ? " " : "") + unique;
-          });
-
-          tryClarify();
-        }
-      } catch (err: any) {
-        console.error("Transcription chunk error:", err);
-        const msg = err?.message || "";
-        if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
-          setError("Invalid API key. Please check your OpenAI API key in settings.");
-        } else {
-          setError(msg || "Connection issue. Some audio may have been lost.");
-        }
-      }
-    };
-  });
-
-  const handleRecordSegmentRef = useRef<(wavBlob: Blob) => void>(() => {});
-
-  useEffect(() => {
-    handleRecordSegmentRef.current = async (wavBlob: Blob) => {
-      const s = settingsRef.current;
-      setIsProcessing(true);
+      if (isRecordMode) setIsProcessing(true);
+      setError(null);
 
       try {
         if (s.diarizeEnabled) {
-          const result = await diarizeMutation.mutateAsync({
-            audioBlob: wavBlob,
-            language: s.language,
-            apiKey: s.openaiApiKey || undefined,
-          });
-
-          if (result.segments && result.segments.length > 0) {
-            const newSegs = result.segments.filter((seg) => seg.text.trim());
-            setDiarizedSegments((prev) => [...prev, ...newSegs]);
-            const plainText = newSegs
-              .map((seg) => `${seg.speaker}: ${seg.text}`)
-              .join("\n");
-            setTranscript((prev) => {
-              if (prev.length === 0) return plainText;
-              return prev + "\n" + plainText;
-            });
-          }
+          await handleDiarizeSegment(blob, s, isRecordMode);
         } else {
-          const prompt = transcriptRef.current.slice(-s.contextLength);
-          const result = await transcribeMutation.mutateAsync({
-            audioBlob: wavBlob,
-            prompt,
-            language: s.language,
-            temperature: s.temperature,
-            apiKey: s.openaiApiKey || undefined,
-            model: s.transcribeModel,
-          });
-
-          if (result.text && result.text.trim()) {
-            const newText = result.text.trim();
-            setTranscript((prev) => {
-              if (prev.length === 0) return newText;
-              const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
-              return prev + (needsSpace ? " " : "") + newText;
-            });
-
-            if (s.clarifyEnabled) {
-              setTimeout(() => tryClarify(), 100);
-            }
-          }
+          await handleTranscribeSegment(blob, s, isRecordMode);
         }
       } catch (err: any) {
-        console.error("Record segment transcription error:", err);
-        const msg = err?.message || "";
-        if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
-          setError("Invalid API key. Please check your OpenAI API key in settings.");
-        } else {
-          setError(msg || "Transcription failed.");
-        }
+        handleTranscriptionError(err, isRecordMode);
       } finally {
-        setIsProcessing(false);
+        if (isRecordMode) setIsProcessing(false);
       }
     };
+
+    async function handleDiarizeSegment(blob: Blob, s: TranscriptionSettings, isRecordMode: boolean) {
+      const result = await diarizeMutation.mutateAsync({
+        audioBlob: blob,
+        language: s.language,
+        apiKey: s.openaiApiKey || undefined,
+      });
+
+      if (!result.segments || result.segments.length === 0) return;
+
+      const newSegs = result.segments.filter((seg) => seg.text.trim());
+      if (newSegs.length === 0) return;
+
+      setDiarizedSegments((prev) => {
+        if (!isRecordMode && prev.length > 0) {
+          const lastSeg = prev[prev.length - 1];
+          const firstNew = newSegs[0];
+          if (lastSeg.speaker === firstNew.speaker) {
+            const merged = [...prev];
+            merged[merged.length - 1] = {
+              ...lastSeg,
+              text: lastSeg.text + " " + firstNew.text,
+              end: firstNew.end,
+            };
+            return [...merged, ...newSegs.slice(1)];
+          }
+        }
+        return [...prev, ...newSegs];
+      });
+
+      const plainText = newSegs.map((seg) => `${seg.speaker}: ${seg.text}`).join("\n");
+      setTranscript((prev) => (prev.length === 0 ? plainText : prev + "\n" + plainText));
+    }
+
+    async function handleTranscribeSegment(blob: Blob, s: TranscriptionSettings, isRecordMode: boolean) {
+      const prompt = transcriptRef.current.slice(-s.contextLength);
+      const result = await transcribeMutation.mutateAsync({
+        audioBlob: blob,
+        prompt,
+        language: s.language,
+        temperature: s.temperature,
+        apiKey: s.openaiApiKey || undefined,
+        model: s.transcribeModel,
+      });
+
+      if (!result.text || !result.text.trim()) return;
+      const newText = result.text.trim();
+
+      setTranscript((prev) => {
+        if (prev.length === 0) return newText;
+
+        if (!isRecordMode) {
+          const tail = prev.slice(-500);
+          const tailLower = tail.toLowerCase();
+          const incomingLower = newText.toLowerCase();
+
+          if (tailLower.includes(incomingLower)) return prev;
+
+          const incomingWords = incomingLower.split(/\s+/).filter(Boolean);
+          if (incomingWords.length >= 3) {
+            const ngramSize = 3;
+            const ngrams: string[] = [];
+            for (let i = 0; i <= incomingWords.length - ngramSize; i++) {
+              ngrams.push(incomingWords.slice(i, i + ngramSize).join(" "));
+            }
+            let matched = 0;
+            for (const ng of ngrams) {
+              if (tailLower.includes(ng)) matched++;
+            }
+            if (ngrams.length > 0 && matched / ngrams.length > 0.5) return prev;
+          }
+
+          let bestOverlap = 0;
+          const maxCheck = Math.min(tail.length, newText.length);
+          for (let len = 5; len <= maxCheck; len++) {
+            const suffix = tailLower.slice(-len);
+            if (incomingLower.startsWith(suffix)) {
+              bestOverlap = len;
+            }
+          }
+
+          const unique = bestOverlap > 0 ? newText.slice(bestOverlap).trim() : newText;
+          if (!unique) return prev;
+
+          const needsSpace = !prev.endsWith(" ") && !unique.startsWith(" ");
+          return prev + (needsSpace ? " " : "") + unique;
+        }
+
+        const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
+        return prev + (needsSpace ? " " : "") + newText;
+      });
+
+      tryClarify();
+    }
+
+    function handleTranscriptionError(err: any, isRecordMode: boolean) {
+      console.error(`[${isRecordMode ? "Record" : "Live"}] Transcription error:`, err);
+
+      if (err instanceof DiarizeModelError) {
+        setError(err.message);
+        if (recorderRef.current) {
+          recorderRef.current.stop();
+          recorderRef.current = null;
+        }
+        setIsRecording(false);
+        setIsSilent(true);
+        setSettings((prev) => ({ ...prev, diarizeEnabled: false }));
+        return;
+      }
+
+      const msg = err?.message || "";
+      if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
+        setError("Invalid API key. Please check your OpenAI API key in settings.");
+      } else {
+        setError(msg || "Connection issue. Some audio may have been lost.");
+      }
+    }
   });
 
   const startRecording = async () => {
@@ -364,11 +310,10 @@ export default function Home() {
       setError(null);
       setIsSilent(true);
       clarifiedUpToRef.current = transcriptRef.current.length;
-      translatedUpToRef.current = 0;
 
       if (settings.recordMode === "record") {
         const recorder = new FullRecorder(
-          (blob) => handleRecordSegmentRef.current(blob),
+          (blob) => handleAudioSegmentRef.current(blob, "record"),
           settings.silenceThreshold,
           (silent) => setIsSilent(silent),
           60000,
@@ -387,7 +332,7 @@ export default function Home() {
         });
       } else {
         const recorder = new ChunkedAudioRecorder(
-          (blob) => handleChunkRef.current(blob),
+          (blob) => handleAudioSegmentRef.current(blob, "live"),
           settings.chunkDuration * 1000,
           settings.silenceThreshold,
           (silent) => setIsSilent(silent),
@@ -444,7 +389,6 @@ export default function Home() {
       setTranslation("");
       setDiarizedSegments([]);
       clarifiedUpToRef.current = 0;
-      translatedUpToRef.current = 0;
     }
   };
 

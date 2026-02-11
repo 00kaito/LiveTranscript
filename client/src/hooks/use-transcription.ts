@@ -31,51 +31,36 @@ type DiarizeResult = {
   text: string;
 };
 
-export function useTranscribeChunk() {
-  return useMutation({
-    mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey, model }: TranscribeInput): Promise<TranscribeResult> => {
-      const formData = new FormData();
-      const ext = audioBlob.type.includes("webm") ? "webm" : "wav";
-      formData.append("file", audioBlob, `audio.${ext}`);
-      
-      if (prompt) {
-        formData.append("prompt", prompt);
-      }
-      if (language) {
-        formData.append("language", language);
-      }
-      if (temperature !== undefined) {
-        formData.append("temperature", String(temperature));
-      }
-      if (model) {
-        formData.append("model", model);
-      }
+function getAudioFileName(blob: Blob): string {
+  const ext = blob.type.includes("webm") ? "webm" : "wav";
+  return `audio.${ext}`;
+}
 
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers["X-OpenAI-Key"] = apiKey;
-      }
+function buildHeaders(apiKey?: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+  return headers;
+}
 
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        headers,
-        body: formData,
-      });
+async function fetchWithError<T>(url: string, options: RequestInit, fallbackMessage: string): Promise<T> {
+  const res = await fetch(url, options);
 
-      if (!res.ok) {
-        let errorMessage = "Transcription failed";
-        try {
-          const errorData = await res.json();
-          errorMessage = errorData.message || errorMessage;
-        } catch {
-        }
-        throw new Error(errorMessage);
-      }
+  if (!res.ok) {
+    let errorMessage = fallbackMessage;
+    let errorCode = "";
+    try {
+      const errorData = await res.json();
+      errorMessage = errorData.message || errorMessage;
+      errorCode = errorData.code || "";
+    } catch {}
 
-      const data = await res.json();
-      return data as TranscribeResult;
-    },
-  });
+    if (errorCode === "MODEL_NOT_AVAILABLE") {
+      throw new DiarizeModelError(errorMessage, errorCode);
+    }
+    throw new Error(errorMessage);
+  }
+
+  return res.json() as Promise<T>;
 }
 
 export class DiarizeModelError extends Error {
@@ -86,44 +71,37 @@ export class DiarizeModelError extends Error {
   }
 }
 
+export function useTranscribeChunk() {
+  return useMutation({
+    mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey, model }: TranscribeInput): Promise<TranscribeResult> => {
+      const formData = new FormData();
+      formData.append("file", audioBlob, getAudioFileName(audioBlob));
+      if (prompt) formData.append("prompt", prompt);
+      if (language) formData.append("language", language);
+      if (temperature !== undefined) formData.append("temperature", String(temperature));
+      if (model) formData.append("model", model);
+
+      return fetchWithError<TranscribeResult>(
+        "/api/transcribe",
+        { method: "POST", headers: buildHeaders(apiKey), body: formData },
+        "Transcription failed",
+      );
+    },
+  });
+}
+
 export function useDiarizeChunk() {
   return useMutation({
     mutationFn: async ({ audioBlob, language, apiKey }: DiarizeInput): Promise<DiarizeResult> => {
       const formData = new FormData();
-      const dExt = audioBlob.type.includes("webm") ? "webm" : "wav";
-      formData.append("file", audioBlob, `audio.${dExt}`);
+      formData.append("file", audioBlob, getAudioFileName(audioBlob));
+      if (language) formData.append("language", language);
 
-      if (language) {
-        formData.append("language", language);
-      }
-
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers["X-OpenAI-Key"] = apiKey;
-      }
-
-      const res = await fetch("/api/transcribe-diarize", {
-        method: "POST",
-        headers,
-        body: formData,
-      });
-
-      if (!res.ok) {
-        let errorMessage = "Diarized transcription failed";
-        let errorCode = "";
-        try {
-          const errorData = await res.json();
-          errorMessage = errorData.message || errorMessage;
-          errorCode = errorData.code || "";
-        } catch {}
-        if (errorCode === "MODEL_NOT_AVAILABLE") {
-          throw new DiarizeModelError(errorMessage, errorCode);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await res.json();
-      return data as DiarizeResult;
+      return fetchWithError<DiarizeResult>(
+        "/api/transcribe-diarize",
+        { method: "POST", headers: buildHeaders(apiKey), body: formData },
+        "Diarized transcription failed",
+      );
     },
   });
 }
