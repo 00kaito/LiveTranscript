@@ -4,9 +4,9 @@ import { Button } from "@/components/Button";
 import { LiveIndicator } from "@/components/LiveIndicator";
 import { AudioVisualizer } from "@/components/AudioVisualizer";
 import { SettingsDialog, DEFAULT_SETTINGS, type TranscriptionSettings } from "@/components/SettingsDialog";
-import { ChunkedAudioRecorder } from "@/lib/audio-recorder";
+import { ChunkedAudioRecorder, FullRecorder } from "@/lib/audio-recorder";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Copy, RefreshCw, AlertCircle, Languages } from "lucide-react";
+import { Mic, Square, Copy, RefreshCw, AlertCircle, Languages, Loader2 } from "lucide-react";
 import { SummaryDialog } from "@/components/SummaryDialog";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,11 +36,13 @@ function findSentenceEndings(text: string): number[] {
 
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [isSilent, setIsSilent] = useState(true);
   const [transcript, setTranscript] = useState("");
   const [translation, setTranslation] = useState("");
   const [diarizedSegments, setDiarizedSegments] = useState<DiarizedSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [settings, setSettings] = useState<TranscriptionSettings>(() => {
     try {
       const saved = localStorage.getItem("transcription-settings");
@@ -54,6 +56,8 @@ export default function Home() {
   });
   const transcriptRef = useRef("");
   const recorderRef = useRef<ChunkedAudioRecorder | null>(null);
+  const fullRecorderRef = useRef<FullRecorder | null>(null);
+  const durationIntervalRef = useRef<number | null>(null);
   const settingsRef = useRef(settings);
   const clarifiedUpToRef = useRef(0);
   const clarifyingRef = useRef(false);
@@ -291,30 +295,112 @@ export default function Home() {
     };
   });
 
+  const processFullRecording = useCallback(async (wavBlob: Blob) => {
+    const s = settingsRef.current;
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      if (s.diarizeEnabled) {
+        const result = await diarizeMutation.mutateAsync({
+          audioBlob: wavBlob,
+          language: s.language,
+          apiKey: s.openaiApiKey || undefined,
+        });
+
+        if (result.segments && result.segments.length > 0) {
+          setDiarizedSegments(result.segments.filter((seg) => seg.text.trim()));
+          const plainText = result.segments
+            .filter((seg) => seg.text.trim())
+            .map((seg) => `${seg.speaker}: ${seg.text}`)
+            .join("\n");
+          setTranscript(plainText);
+        }
+      } else {
+        const result = await transcribeMutation.mutateAsync({
+          audioBlob: wavBlob,
+          prompt: "",
+          language: s.language,
+          temperature: s.temperature,
+          apiKey: s.openaiApiKey || undefined,
+          model: s.transcribeModel,
+        });
+
+        if (result.text && result.text.trim()) {
+          const newText = result.text.trim();
+          setTranscript((prev) => {
+            if (prev.length === 0) return newText;
+            const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
+            return prev + (needsSpace ? " " : "") + newText;
+          });
+        }
+      }
+
+      toast({
+        title: "Transcription Complete",
+        description: "Your recording has been transcribed.",
+      });
+
+      if (s.clarifyEnabled) {
+        setTimeout(() => tryClarify(), 100);
+      }
+    } catch (err: any) {
+      console.error("Full recording transcription error:", err);
+      const msg = err?.message || "";
+      if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
+        setError("Invalid API key. Please check your OpenAI API key in settings.");
+      } else {
+        setError(msg || "Transcription failed.");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [diarizeMutation, transcribeMutation, toast, tryClarify]);
+
   const startRecording = async () => {
     try {
       setError(null);
       setIsSilent(true);
       clarifiedUpToRef.current = transcriptRef.current.length;
       translatedUpToRef.current = 0;
-      const recorder = new ChunkedAudioRecorder(
-        (blob) => handleChunkRef.current(blob),
-        settings.chunkDuration * 1000,
-        settings.silenceThreshold,
-        (silent) => setIsSilent(silent),
-      );
-      await recorder.start();
-      recorderRef.current = recorder;
-      setIsRecording(true);
 
-      toast({
-        title: "Microphone Active",
-        description: settings.diarizeEnabled
-          ? "Diarized transcription started. Speaker identification active."
-          : settings.translatorEnabled
-          ? "Transcription with live translation started."
-          : "Transcription started. Speak clearly.",
-      });
+      if (settings.recordMode === "record") {
+        const recorder = new FullRecorder(
+          settings.silenceThreshold,
+          (silent) => setIsSilent(silent),
+        );
+        await recorder.start();
+        fullRecorderRef.current = recorder;
+        setIsRecording(true);
+        setRecordingDuration(0);
+        durationIntervalRef.current = window.setInterval(() => {
+          setRecordingDuration((d) => d + 1);
+        }, 1000);
+
+        toast({
+          title: "Recording Started",
+          description: "Recording audio. Press stop when done to transcribe.",
+        });
+      } else {
+        const recorder = new ChunkedAudioRecorder(
+          (blob) => handleChunkRef.current(blob),
+          settings.chunkDuration * 1000,
+          settings.silenceThreshold,
+          (silent) => setIsSilent(silent),
+        );
+        await recorder.start();
+        recorderRef.current = recorder;
+        setIsRecording(true);
+
+        toast({
+          title: "Microphone Active",
+          description: settings.diarizeEnabled
+            ? "Diarized transcription started. Speaker identification active."
+            : settings.translatorEnabled
+            ? "Transcription with live translation started."
+            : "Transcription started. Speak clearly.",
+        });
+      }
     } catch (err) {
       console.error("Error accessing microphone:", err);
       toast({
@@ -326,6 +412,29 @@ export default function Home() {
   };
 
   const stopRecording = () => {
+    if (durationIntervalRef.current !== null) {
+      clearInterval(durationIntervalRef.current);
+      durationIntervalRef.current = null;
+    }
+
+    if (fullRecorderRef.current) {
+      const wavBlob = fullRecorderRef.current.stop();
+      fullRecorderRef.current = null;
+      setIsRecording(false);
+      setIsSilent(true);
+      setRecordingDuration(0);
+
+      if (wavBlob) {
+        processFullRecording(wavBlob);
+      } else {
+        toast({
+          title: "No Audio",
+          description: "No audio was recorded. Please try again.",
+        });
+      }
+      return;
+    }
+
     if (recorderRef.current) {
       recorderRef.current.stop();
       recorderRef.current = null;
@@ -436,20 +545,27 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2">
             <AnimatePresence>
-              {isRecording && (
+              {(isRecording || isProcessing) && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
                 >
-                  <LiveIndicator />
+                  {isProcessing ? (
+                    <span className="flex items-center gap-2 text-sm font-medium text-primary" data-testid="text-processing-indicator">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Processing
+                    </span>
+                  ) : (
+                    <LiveIndicator />
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
             <SettingsDialog
               settings={settings}
               onChange={setSettings}
-              disabled={isRecording}
+              disabled={isRecording || isProcessing}
             />
           </div>
         </div>
@@ -571,7 +687,30 @@ export default function Home() {
             <div className="absolute inset-0 rounded-2xl bg-gradient-to-tr from-white/50 to-white/10 dark:from-card/50 dark:to-card/10 pointer-events-none" />
             <div className="relative z-10 flex flex-col items-center w-full py-2">
               <AnimatePresence mode="wait">
-                {isRecording ? (
+                {isProcessing ? (
+                  <motion.div
+                    key="processing"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    className="flex flex-col items-center gap-3"
+                  >
+                    <div className="h-8 flex items-center justify-center">
+                      <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                    </div>
+                    <Button
+                      disabled
+                      size="lg"
+                      className="rounded-full"
+                      data-testid="button-processing"
+                    >
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    </Button>
+                    <span className="text-sm font-medium text-muted-foreground" data-testid="text-processing-status">
+                      Transcribing recording...
+                    </span>
+                  </motion.div>
+                ) : isRecording ? (
                   <motion.div
                     key="stop"
                     initial={{ opacity: 0, scale: 0.8 }}
@@ -593,8 +732,12 @@ export default function Home() {
                     >
                       <Square className="w-6 h-6 fill-current" />
                     </Button>
-                    <span className="text-sm font-medium text-muted-foreground">
-                      {isSilent ? "Waiting for speech..." : "Recording — tap to stop"}
+                    <span className="text-sm font-medium text-muted-foreground" data-testid="text-recording-status">
+                      {settings.recordMode === "record" ? (
+                        <>Recording {String(Math.floor(recordingDuration / 60)).padStart(2, "0")}:{String(recordingDuration % 60).padStart(2, "0")} — tap to stop and transcribe</>
+                      ) : (
+                        isSilent ? "Waiting for speech..." : "Recording — tap to stop"
+                      )}
                     </span>
                   </motion.div>
                 ) : (
@@ -616,7 +759,9 @@ export default function Home() {
                     >
                       <Mic className="w-6 h-6" />
                     </Button>
-                    <span className="text-sm font-medium text-muted-foreground">Tap to record</span>
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {settings.recordMode === "record" ? "Tap to record" : "Tap to record"}
+                    </span>
                   </motion.div>
                 )}
               </AnimatePresence>

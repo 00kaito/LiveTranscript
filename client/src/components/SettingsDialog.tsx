@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Settings, Eye, EyeOff } from "lucide-react";
 
 export type TranscriptionSettings = {
+  recordMode: "live" | "record";
   transcribeModel: string;
   chunkDuration: number;
   language: string;
@@ -53,6 +54,7 @@ A bullet list of specific tasks, assignments, or next steps to be taken. Include
 If a section has no relevant content, write "None identified." Keep the language professional and clear.`;
 
 export const DEFAULT_SETTINGS: TranscriptionSettings = {
+  recordMode: "live",
   transcribeModel: "gpt-4o-mini-transcribe",
   chunkDuration: 3,
   language: "pl",
@@ -174,6 +176,27 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
           </div>
 
           <div className="border-t border-border pt-4 space-y-3">
+            <div className="space-y-1">
+              <Label>Recording mode</Label>
+              <p className="text-xs text-muted-foreground">
+                Live: transcribes audio in real-time as you speak. Record: records everything first, then transcribes after you stop.
+              </p>
+            </div>
+            <Select
+              value={settings.recordMode}
+              onValueChange={(v) => update({ recordMode: v as "live" | "record" })}
+            >
+              <SelectTrigger className="bg-background" data-testid="select-record-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="live" data-testid="option-mode-live">Live transcription</SelectItem>
+                <SelectItem value="record" data-testid="option-mode-record">Record then transcribe</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <Label>Chunk duration</Label>
               <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-chunk-value">

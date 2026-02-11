@@ -158,3 +158,110 @@ export class ChunkedAudioRecorder {
     return this.stream;
   }
 }
+
+export class FullRecorder {
+  private stream: MediaStream | null = null;
+  private audioContext: AudioContext | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private chunks: Float32Array[] = [];
+  private isActive = false;
+  private onSilenceChange: SilenceCallback | null;
+  private silenceThreshold: number;
+  private lastSilentState: boolean | null = null;
+
+  constructor(
+    silenceThreshold = 0.005,
+    onSilenceChange?: SilenceCallback,
+  ) {
+    this.silenceThreshold = silenceThreshold;
+    this.onSilenceChange = onSilenceChange || null;
+  }
+
+  async start() {
+    this.chunks = [];
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: SAMPLE_RATE,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+
+    this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    this.source = this.audioContext.createMediaStreamSource(this.stream);
+
+    const bufferSize = 4096;
+    this.processor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+    this.processor.onaudioprocess = (e) => {
+      if (!this.isActive) return;
+      const inputData = e.inputBuffer.getChannelData(0);
+      const copy = new Float32Array(inputData);
+      this.chunks.push(copy);
+
+      let sumSquares = 0;
+      for (let i = 0; i < copy.length; i++) {
+        sumSquares += copy[i] * copy[i];
+      }
+      const rms = Math.sqrt(sumSquares / copy.length);
+      const isSilent = rms < this.silenceThreshold;
+
+      if (this.onSilenceChange && this.lastSilentState !== isSilent) {
+        this.lastSilentState = isSilent;
+        this.onSilenceChange(isSilent);
+      }
+    };
+
+    this.source.connect(this.processor);
+    this.processor.connect(this.audioContext.destination);
+    this.isActive = true;
+  }
+
+  stop(): Blob | null {
+    this.isActive = false;
+
+    if (this.processor) {
+      this.processor.disconnect();
+      this.processor = null;
+    }
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
+    }
+
+    const sampleRate = this.audioContext?.sampleRate ?? SAMPLE_RATE;
+
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    }
+
+    if (this.chunks.length === 0) return null;
+
+    const totalLength = this.chunks.reduce((acc, c) => acc + c.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    this.chunks = [];
+
+    return encodeWav(merged, sampleRate);
+  }
+
+  getStream(): MediaStream | null {
+    return this.stream;
+  }
+
+  getDurationSeconds(): number {
+    const totalSamples = this.chunks.reduce((acc, c) => acc + c.length, 0);
+    return totalSamples / SAMPLE_RATE;
+  }
+}
