@@ -181,25 +181,27 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
             </Select>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Chunk duration</Label>
-              <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-chunk-value">
-                {settings.chunkDuration}s
-              </span>
+          {settings.recordMode === "live" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Chunk duration</Label>
+                <span className="text-sm text-muted-foreground tabular-nums" data-testid="text-chunk-value">
+                  {settings.chunkDuration}s
+                </span>
+              </div>
+              <Slider
+                value={[settings.chunkDuration]}
+                onValueChange={([v]) => update({ chunkDuration: v })}
+                min={1}
+                max={10}
+                step={1}
+                data-testid="slider-chunk-duration"
+              />
+              <p className="text-xs text-muted-foreground">
+                How often audio is sent for transcription. Shorter = more responsive, longer = more context per chunk.
+              </p>
             </div>
-            <Slider
-              value={[settings.chunkDuration]}
-              onValueChange={([v]) => update({ chunkDuration: v })}
-              min={1}
-              max={10}
-              step={1}
-              data-testid="slider-chunk-duration"
-            />
-            <p className="text-xs text-muted-foreground">
-              How often audio is sent for transcription. Shorter = more responsive, longer = more context per chunk.
-            </p>
-          </div>
+          )}
 
           <div className="space-y-3">
             <Label>Language</Label>
@@ -220,24 +222,26 @@ export function SettingsDialog({ settings, onChange, disabled }: Props) {
             </Select>
           </div>
 
-          <div className="space-y-3">
-            <Label>Transcription model</Label>
-            <Select
-              value={settings.transcribeModel}
-              onValueChange={(v) => update({ transcribeModel: v })}
-            >
-              <SelectTrigger className="bg-background" data-testid="select-transcribe-model">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="gpt-4o-mini-transcribe" data-testid="option-model-mini">gpt-4o-mini-transcribe</SelectItem>
-                <SelectItem value="gpt-4o-transcribe" data-testid="option-model-full">gpt-4o-transcribe</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Mini is faster and cheaper. Full model is more accurate, especially for complex audio.
-            </p>
-          </div>
+          {!settings.diarizeEnabled && (
+            <div className="space-y-3">
+              <Label>Transcription model</Label>
+              <Select
+                value={settings.transcribeModel}
+                onValueChange={(v) => update({ transcribeModel: v })}
+              >
+                <SelectTrigger className="bg-background" data-testid="select-transcribe-model">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gpt-4o-mini-transcribe" data-testid="option-model-mini">gpt-4o-mini-transcribe</SelectItem>
+                  <SelectItem value="gpt-4o-transcribe" data-testid="option-model-full">gpt-4o-transcribe</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Mini is faster and cheaper. Full model is more accurate, especially for complex audio.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">

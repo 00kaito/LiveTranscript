@@ -61,7 +61,7 @@ export async function registerRoutes(
       const temperature = req.body.temperature !== undefined ? parseFloat(req.body.temperature) : 0;
       const model = req.body.model || "gpt-4o-mini-transcribe";
 
-      console.log(`[Transcribe] Chunk received: ${req.file.size} bytes, lang=${language}, temp=${temperature}`);
+      console.log(`[Transcribe] Chunk received: ${req.file.size} bytes, lang=${language}, temp=${temperature}, model=${model}, prompt=${prompt ? `"${prompt.slice(0, 80)}..."` : "(none)"}`);
 
       const file = await readUploadedAudio(req.file);
       const transcribeParams: any = { file, model, prompt, temperature };

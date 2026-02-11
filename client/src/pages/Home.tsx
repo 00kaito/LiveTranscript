@@ -222,7 +222,7 @@ export default function Home() {
 
     async function handleTranscribeSegment(blob: Blob, s: TranscriptionSettings, isRecordMode: boolean) {
       const prompt = transcriptRef.current.slice(-s.contextLength);
-      console.log(`[Transcribe] Sending chunk: ${blob.size} bytes, mode=${isRecordMode ? "record" : "live"}`);
+      console.log(`[Transcribe] Sending chunk: ${blob.size} bytes, mode=${isRecordMode ? "record" : "live"}, context=${prompt ? `"${prompt.slice(0, 60)}..." (${prompt.length} chars)` : "(none)"}`);
       const result = await transcribeMutation.mutateAsync({
         audioBlob: blob,
         prompt,
