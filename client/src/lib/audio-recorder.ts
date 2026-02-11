@@ -165,21 +165,30 @@ export class FullRecorder {
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private chunks: Float32Array[] = [];
+  private totalSamples = 0;
   private isActive = false;
+  private onSegment: AudioRecorderCallback;
   private onSilenceChange: SilenceCallback | null;
   private silenceThreshold: number;
   private lastSilentState: boolean | null = null;
+  private segmentDurationMs: number;
+  private intervalId: number | null = null;
 
   constructor(
+    onSegment: AudioRecorderCallback,
     silenceThreshold = 0.005,
     onSilenceChange?: SilenceCallback,
+    segmentDurationMs = 60000,
   ) {
+    this.onSegment = onSegment;
     this.silenceThreshold = silenceThreshold;
     this.onSilenceChange = onSilenceChange || null;
+    this.segmentDurationMs = segmentDurationMs;
   }
 
   async start() {
     this.chunks = [];
+    this.totalSamples = 0;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: SAMPLE_RATE,
@@ -200,6 +209,7 @@ export class FullRecorder {
       const inputData = e.inputBuffer.getChannelData(0);
       const copy = new Float32Array(inputData);
       this.chunks.push(copy);
+      this.totalSamples += copy.length;
 
       let sumSquares = 0;
       for (let i = 0; i < copy.length; i++) {
@@ -217,32 +227,14 @@ export class FullRecorder {
     this.source.connect(this.processor);
     this.processor.connect(this.audioContext.destination);
     this.isActive = true;
+
+    this.intervalId = window.setInterval(() => {
+      this.flushSegment();
+    }, this.segmentDurationMs);
   }
 
-  stop(): Blob[] {
-    this.isActive = false;
-
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
-    }
-    if (this.source) {
-      this.source.disconnect();
-      this.source = null;
-    }
-
-    const sampleRate = this.audioContext?.sampleRate ?? SAMPLE_RATE;
-
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-    if (this.stream) {
-      this.stream.getTracks().forEach((t) => t.stop());
-      this.stream = null;
-    }
-
-    if (this.chunks.length === 0) return [];
+  private flushSegment() {
+    if (this.chunks.length === 0) return;
 
     const totalLength = this.chunks.reduce((acc, c) => acc + c.length, 0);
     const merged = new Float32Array(totalLength);
@@ -253,16 +245,37 @@ export class FullRecorder {
     }
     this.chunks = [];
 
-    const maxSamplesPerSegment = sampleRate * 60;
-    const blobs: Blob[] = [];
+    const sampleRate = this.audioContext?.sampleRate ?? SAMPLE_RATE;
+    const wavBlob = encodeWav(merged, sampleRate);
+    this.onSegment(wavBlob);
+  }
 
-    for (let i = 0; i < merged.length; i += maxSamplesPerSegment) {
-      const end = Math.min(i + maxSamplesPerSegment, merged.length);
-      const segment = merged.subarray(i, end);
-      blobs.push(encodeWav(segment, sampleRate));
+  stop() {
+    this.isActive = false;
+
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
 
-    return blobs;
+    this.flushSegment();
+
+    if (this.processor) {
+      this.processor.disconnect();
+      this.processor = null;
+    }
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    }
   }
 
   getStream(): MediaStream | null {
@@ -270,7 +283,6 @@ export class FullRecorder {
   }
 
   getDurationSeconds(): number {
-    const totalSamples = this.chunks.reduce((acc, c) => acc + c.length, 0);
-    return totalSamples / SAMPLE_RATE;
+    return this.totalSamples / SAMPLE_RATE;
   }
 }

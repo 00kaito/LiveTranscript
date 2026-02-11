@@ -295,20 +295,17 @@ export default function Home() {
     };
   });
 
-  const processFullRecording = useCallback(async (wavBlobs: Blob[]) => {
-    const s = settingsRef.current;
-    setIsProcessing(true);
-    setError(null);
+  const handleRecordSegmentRef = useRef<(wavBlob: Blob) => void>(() => {});
 
-    try {
-      let contextPrompt = "";
+  useEffect(() => {
+    handleRecordSegmentRef.current = async (wavBlob: Blob) => {
+      const s = settingsRef.current;
+      setIsProcessing(true);
 
-      for (let i = 0; i < wavBlobs.length; i++) {
-        const blob = wavBlobs[i];
-
+      try {
         if (s.diarizeEnabled) {
           const result = await diarizeMutation.mutateAsync({
-            audioBlob: blob,
+            audioBlob: wavBlob,
             language: s.language,
             apiKey: s.openaiApiKey || undefined,
           });
@@ -325,9 +322,10 @@ export default function Home() {
             });
           }
         } else {
+          const prompt = transcriptRef.current.slice(-s.contextLength);
           const result = await transcribeMutation.mutateAsync({
-            audioBlob: blob,
-            prompt: contextPrompt,
+            audioBlob: wavBlob,
+            prompt,
             language: s.language,
             temperature: s.temperature,
             apiKey: s.openaiApiKey || undefined,
@@ -336,38 +334,30 @@ export default function Home() {
 
           if (result.text && result.text.trim()) {
             const newText = result.text.trim();
-            contextPrompt = newText.slice(-s.contextLength);
             setTranscript((prev) => {
               if (prev.length === 0) return newText;
               const needsSpace = !prev.endsWith(" ") && !newText.startsWith(" ");
               return prev + (needsSpace ? " " : "") + newText;
             });
+
+            if (s.clarifyEnabled) {
+              setTimeout(() => tryClarify(), 100);
+            }
           }
         }
+      } catch (err: any) {
+        console.error("Record segment transcription error:", err);
+        const msg = err?.message || "";
+        if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
+          setError("Invalid API key. Please check your OpenAI API key in settings.");
+        } else {
+          setError(msg || "Transcription failed.");
+        }
+      } finally {
+        setIsProcessing(false);
       }
-
-      toast({
-        title: "Transcription Complete",
-        description: wavBlobs.length > 1
-          ? `Recording transcribed in ${wavBlobs.length} segments.`
-          : "Your recording has been transcribed.",
-      });
-
-      if (s.clarifyEnabled) {
-        setTimeout(() => tryClarify(), 100);
-      }
-    } catch (err: any) {
-      console.error("Full recording transcription error:", err);
-      const msg = err?.message || "";
-      if (msg.includes("401") || msg.includes("API key") || msg.includes("Incorrect")) {
-        setError("Invalid API key. Please check your OpenAI API key in settings.");
-      } else {
-        setError(msg || "Transcription failed.");
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [diarizeMutation, transcribeMutation, toast, tryClarify]);
+    };
+  });
 
   const startRecording = async () => {
     try {
@@ -378,8 +368,10 @@ export default function Home() {
 
       if (settings.recordMode === "record") {
         const recorder = new FullRecorder(
+          (blob) => handleRecordSegmentRef.current(blob),
           settings.silenceThreshold,
           (silent) => setIsSilent(silent),
+          60000,
         );
         await recorder.start();
         fullRecorderRef.current = recorder;
@@ -391,7 +383,7 @@ export default function Home() {
 
         toast({
           title: "Recording Started",
-          description: "Recording audio. Press stop when done to transcribe.",
+          description: "Recording audio. Segments are transcribed every 60s. Press stop to finish.",
         });
       } else {
         const recorder = new ChunkedAudioRecorder(
@@ -430,20 +422,11 @@ export default function Home() {
     }
 
     if (fullRecorderRef.current) {
-      const wavBlobs = fullRecorderRef.current.stop();
+      fullRecorderRef.current.stop();
       fullRecorderRef.current = null;
       setIsRecording(false);
       setIsSilent(true);
       setRecordingDuration(0);
-
-      if (wavBlobs.length > 0) {
-        processFullRecording(wavBlobs);
-      } else {
-        toast({
-          title: "No Audio",
-          description: "No audio was recorded. Please try again.",
-        });
-      }
       return;
     }
 
