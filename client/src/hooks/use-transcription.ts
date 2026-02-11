@@ -35,7 +35,8 @@ export function useTranscribeChunk() {
   return useMutation({
     mutationFn: async ({ audioBlob, prompt, language, temperature, apiKey, model }: TranscribeInput): Promise<TranscribeResult> => {
       const formData = new FormData();
-      formData.append("file", audioBlob, "chunk.wav");
+      const ext = audioBlob.type.includes("webm") ? "webm" : "wav";
+      formData.append("file", audioBlob, `audio.${ext}`);
       
       if (prompt) {
         formData.append("prompt", prompt);
@@ -89,7 +90,8 @@ export function useDiarizeChunk() {
   return useMutation({
     mutationFn: async ({ audioBlob, language, apiKey }: DiarizeInput): Promise<DiarizeResult> => {
       const formData = new FormData();
-      formData.append("file", audioBlob, "chunk.wav");
+      const dExt = audioBlob.type.includes("webm") ? "webm" : "wav";
+      formData.append("file", audioBlob, `audio.${dExt}`);
 
       if (language) {
         formData.append("language", language);

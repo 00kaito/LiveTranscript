@@ -39,7 +39,12 @@ export async function registerRoutes(
       console.log(`[Transcribe] Chunk received: ${req.file.size} bytes, lang=${language}, temp=${temperature}`);
 
       const buffer = await fs.promises.readFile(tempFilePath);
-      const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
+      const origName = req.file.originalname || "audio.wav";
+      const origMime = req.file.mimetype || "audio/wav";
+      const ext = origName.includes(".") ? origName.split(".").pop() : (origMime.includes("webm") ? "webm" : "wav");
+      const fileName = `audio.${ext}`;
+      const fileType = origMime.startsWith("audio/") ? origMime : "audio/wav";
+      const file = await toFile(buffer, fileName, { type: fileType });
 
       const model = req.body.model || "gpt-4o-mini-transcribe";
       const transcribeParams: any = {
@@ -81,7 +86,10 @@ export async function registerRoutes(
       console.log(`[Diarize] Chunk received: ${req.file.size} bytes, lang=${language}`);
 
       const buffer = await fs.promises.readFile(tempFilePath);
-      const file = await toFile(buffer, "audio.wav", { type: "audio/wav" });
+      const dOrigName = req.file.originalname || "audio.wav";
+      const dOrigMime = req.file.mimetype || "audio/wav";
+      const dExt = dOrigName.includes(".") ? dOrigName.split(".").pop() : (dOrigMime.includes("webm") ? "webm" : "wav");
+      const file = await toFile(buffer, `audio.${dExt}`, { type: dOrigMime.startsWith("audio/") ? dOrigMime : "audio/wav" });
 
       const transcribeParams: any = {
         file: file,
